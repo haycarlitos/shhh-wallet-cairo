@@ -1,0 +1,19 @@
+[package]
+name = "shhh_wallet"
+version = "0.1.0"
+edition = "2024_07"
+
+[dependencies]
+starknet = "2.14.0"
+openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v3.0.0" }
+garaga = { git = "https://github.com/keep-starknet-strange/garaga.git", tag = "v1.0.1" }
+
+[dev-dependencies]
+snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.54.1" }
+
+[[target.starknet-contract]]
+sierra = true
+casm = true
+
+[scripts]
+test = "snforge test"
