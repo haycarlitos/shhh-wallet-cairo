@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main, v8-robust]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Scarb
+        uses: software-mansion/setup-scarb@v1
+        with:
+          scarb-version: "2.14.0"
+
+      - name: Install Starknet Foundry
+        uses: foundry-rs/setup-snfoundry@v3
+        with:
+          starknet-foundry-version: "0.56.0"
+
+      - name: scarb build
+        run: scarb build
+
+      - name: scarb fmt --check
+        run: scarb fmt --check
+
+      - name: snforge test
+        run: snforge test
+
+      - name: Audit regression gate
+        run: snforge test --filter audit_2026_04_20

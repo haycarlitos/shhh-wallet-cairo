@@ -1,6 +1,6 @@
 [package]
 name = "shhh_wallet"
-version = "0.1.0"
+version = "0.8.0-pre"
 edition = "2024_07"
 
 [dependencies]
@@ -8,8 +8,9 @@ starknet = "2.14.0"
 openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v3.0.0" }
 garaga = { git = "https://github.com/keep-starknet-strange/garaga.git", tag = "v1.0.1" }
 
+# Pinned to match local snforge toolchain (audit response §Tooling).
 [dev-dependencies]
-snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.54.1" }
+snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.56.0" }
 
 [[target.starknet-contract]]
 sierra = true
@@ -17,3 +18,8 @@ casm = true
 
 [scripts]
 test = "snforge test"
+fmt = "scarb fmt --check"
+
+# V8 produces multiple contract classes: ShhhAccount + one verifier per kind.
+# Each verifier is a separately-declared library referenced by class hash
+# from ShhhAccount.verifier_classes at runtime.

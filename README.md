@@ -1,157 +1,120 @@
-# Shhh Wallet — Self-Custodial Starknet Account (Cairo)
+# Shhh Wallet — Cairo
 
-A self-custodial Starknet smart wallet controlled by an **Ed25519 keypair** (e.g., a Solana/Phantom wallet). All operations are authorized via **SNIP-9 V2** (`execute_from_outside_v2`) with on-chain Ed25519 signature verification powered by [Garaga](https://github.com/keep-starknet-strange/garaga).
+> **Status:** Active work on V8 (branch `v8-robust`). V7 is production on mainnet class hash `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13` and remains the reference for the current Phantom-only wallet. V8 generalizes it into a multi-signer, multi-curve, recoverable account and is the reference implementation for a proposed pluggable-signer SNIP.
 
-Designed to work with **Starknet paymasters** for gasless UX — users never need STRK/ETH.
+## Versions
 
-## Use Case
+| Version | Branch | Scope | Production? |
+|---------|--------|-------|-------------|
+| V7      | `main` | Phantom-only (Ed25519) self-custodial wallet, SNIP-9 V2, Garaga Ed25519 | ✅ Mainnet |
+| V8      | `v8-robust` | Multi-signer (Ed25519 / secp256k1 / P-256 / WebAuthn / STARK), session keys, social recovery, all fixes for the 2026-04-20 audit | 🚧 In progress |
 
-Shhh enables Solana users to interact with Starknet DeFi protocols without ever managing Starknet keys or gas tokens:
+## V8 — What's new
 
-1. **User connects Phantom wallet** (Solana)
-2. **A Starknet smart wallet is deterministically derived** from their Ed25519 public key
-3. **All wallet operations** (DeFi deposits, withdrawals, approvals) are signed with Phantom's `signMessage`
-4. **On-chain verification**: The contract verifies Ed25519 signatures using Garaga's optimized elliptic curve operations
-5. **Gas is abstracted**: A paymaster (e.g., [Chipi Pay](https://chipipay.com)) sponsors all transactions
+V8 is a single account class that verifies signatures from any major wallet or device through a pluggable-verifier architecture. One address per user for life. Signers can be added, rotated, or recovered without migrating the account.
 
-The wallet has **no `execute()` entrypoint** — there is no server key, relayer, or admin that can authorize operations. The Ed25519 signature is the **sole authorization mechanism**, making this fully self-custodial.
+Core capabilities:
 
-## Architecture
+- **One class hash, any curve.** Verifier components (Ed25519, secp256k1, WebAuthn P-256, STARK) are separately declared classes; the account dispatches to the right one via `library_call_syscall`. New curves land later by ratifying a new class hash into the account's verifier registry — no account redeployment.
+- **Multi-signer per account.** Weighted owner set with a threshold, `add/remove/rotate_owner` through timelocked governance.
+- **Social recovery.** Guardian-initiated with a 7-day timelock, single-owner cancel during the window.
+- **Session keys + spending policies** ported from [starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163) (merged 2026-03-03, `SNIPS/snip-x.md`).
+- **SNIP-9 V2 compliance via SNIP-12 typed data.** Fixes audit H-2 at the spec level.
+- **Atomic multicall, bounded inputs, caller-gated `__execute__`.** Closes every remaining audit finding.
+- **Immutable.** No `UpgradeableComponent`. Changes happen via recovery or redeploy, never in-place.
 
-### SNIP-9 V2 Flow
+## Audit response + SNIP proposal
+
+This branch is the combined response to:
+
+1. The [2026-04-20 Codex/Cairo security audit](./docs/audit-response-omar.md) (Omar Espejel). Every finding — C-1 / H-1 / H-2 / M-1..4 / L-1 / I-1..3 — is addressed and tracked by a dedicated regression file in [`tests/audit_2026_04_20/`](./tests/audit_2026_04_20/).
+2. A proposed SNIP for pluggable signers on Starknet smart accounts: [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md). V8 is the reference implementation. The SNIP layers on top of the already-merged Session Keys SNIP — authorization (session keys) was standardized by #163; this SNIP standardizes authentication (which curve the owner key is on and how to verify it). Together the two SNIPs cover roughly 99% of the signing surface area humans use in 2026 (MetaMask, Phantom, passkeys, Google / Apple OAuth, YubiKey, validator keys).
+
+### Audit-finding → regression-test map
+
+| ID  | Finding                                                       | Test file                                                  |
+|-----|---------------------------------------------------------------|------------------------------------------------------------|
+| C-1 | Public `__execute__` allowed unsigned calls                    | [`c1_execute_caller_check.cairo`](./tests/audit_2026_04_20/c1_execute_caller_check.cairo) |
+| H-1 | Silent subcall failures                                        | [`h1_atomic_multicall.cairo`](./tests/audit_2026_04_20/h1_atomic_multicall.cairo) |
+| H-2 | SNIP-9 V2 interface ID / semantics mismatch                    | [`h2_snip9_interface_id.cairo`](./tests/audit_2026_04_20/h2_snip9_interface_id.cairo) |
+| M-1 | `caller == 0` accepted as unrestricted                         | [`m1_any_caller_sentinel.cairo`](./tests/audit_2026_04_20/m1_any_caller_sentinel.cairo) |
+| M-2 | No validity-window cap                                         | [`m2_validity_window_cap.cairo`](./tests/audit_2026_04_20/m2_validity_window_cap.cairo) |
+| M-3 | Unbounded calls / calldata / signature                         | [`m3_bounds_calls_calldata_sig.cairo`](./tests/audit_2026_04_20/m3_bounds_calls_calldata_sig.cairo) |
+| M-4 | Signature envelope + trailing-data gaps                        | [`m4_signature_envelope_bounds.cairo`](./tests/audit_2026_04_20/m4_signature_envelope_bounds.cairo) |
+| L-1 | Out-of-range pubkey halves accepted in constructor             | [`l1_pubkey_range_check.cairo`](./tests/audit_2026_04_20/l1_pubkey_range_check.cairo) |
+| I-1 | Custom calls hash replaced by SNIP-12 typed data               | [`i1_custom_hash_removed.cairo`](./tests/audit_2026_04_20/i1_custom_hash_removed.cairo) |
+| I-2 | Missing Ed25519 negative vectors                               | [`i2_ed25519_negative_vectors.cairo`](./tests/audit_2026_04_20/i2_ed25519_negative_vectors.cairo) |
+| I-3 | Unused `UpgradeableComponent` removed                           | [`i3_no_upgradeable_component.cairo`](./tests/audit_2026_04_20/i3_no_upgradeable_component.cairo) |
+| —   | `snforge_std` pinned to v0.56.0                                 | [`toolchain_snforge_pinned.cairo`](./tests/audit_2026_04_20/toolchain_snforge_pinned.cairo) |
+
+CI runs `snforge test --filter audit_2026_04_20` as a dedicated gate.
+
+## Architecture (V8)
 
 ```
-User (Phantom)                    Paymaster                    Starknet Contract
-     |                               |                              |
-     |-- signMessage(OE_hex) ------->|                              |
-     |                               |-- invoke(execute_from_outside_v2)
-     |                               |                              |
-     |                               |   1. Validate caller         |
-     |                               |   2. Check time bounds       |
-     |                               |   3. Mark nonce used         |
-     |                               |   4. Read owner pubkey       |
-     |                               |   5. Verify OE encoding      |
-     |                               |   6. Garaga Ed25519 verify   |
-     |                               |   7. Execute calls           |
-     |                               |                              |
+                          ┌──────────────────────────────────┐
+                          │       ShhhAccount (1 class)      │
+                          │                                  │
+                          │   owners, verifier_classes,      │
+                          │   governance, recovery, sessions │
+                          └─────────────────┬────────────────┘
+                                            │  library_call_syscall
+          ┌─────────────┬────────────┬──────┴──────┬────────────┐
+          ▼             ▼            ▼             ▼            ▼
+     ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌───────┐   (future kinds:
+     │Ed25519  │  │Secp256k1 │  │WebAuthn  │  │STARK  │    RSA, BLS,
+     │verifier │  │verifier  │  │P256 ver. │  │ver.   │    ZK_JWT, ...)
+     │ class   │  │ class    │  │ class    │  │ class │
+     └─────────┘  └──────────┘  └──────────┘  └───────┘
 ```
 
-### Canonical OE Byte Encoding (186 bytes)
-
-The contract reconstructs the exact bytes the user signed and verifies them against the Ed25519 signature:
-
-| Field | Size | Encoding |
-|-------|------|----------|
-| Domain separator (`SHHH_OE_V1`) | 10 bytes | ASCII |
-| `chain_id` | 32 bytes | Big-endian felt252 |
-| `contract_address` | 32 bytes | Big-endian felt252 |
-| `caller` | 32 bytes | Big-endian felt252 |
-| `nonce` | 32 bytes | Big-endian felt252 |
-| `execute_after` | 8 bytes | Big-endian u64 |
-| `execute_before` | 8 bytes | Big-endian u64 |
-| `calls_hash` | 32 bytes | Poseidon hash, big-endian |
-
-The 186 raw bytes are hex-encoded to 372 ASCII characters before Ed25519 verification. This allows Phantom to sign the message as a text string without triggering transaction detection.
-
-## Contract Interface
-
-```cairo
-#[starknet::interface]
-pub trait IShhhWallet<TContractState> {
-    /// Returns the owner's Ed25519 public key as LE u256 halves (low, high)
-    fn get_owner(self: @TContractState) -> (felt252, felt252);
-}
-
-// SNIP-9 V2 (SRC9)
-fn execute_from_outside_v2(
-    outside_execution: OutsideExecution,
-    signature: Span<felt252>,
-) -> Array<Span<felt252>>;
-
-fn is_valid_outside_execution_nonce(nonce: felt252) -> bool;
-```
-
-### Constructor
-
-```cairo
-fn constructor(owner_pubkey_low: felt252, owner_pubkey_high: felt252)
-```
-
-Only two parameters — the Ed25519 public key split into little-endian u256 halves (matching Garaga's `Py_twisted` format).
-
-### What's NOT in the contract
-
-- No `execute()` entrypoint — no relayer, no admin key
-- No sequential nonce — uses SNIP-9 V2 outside execution nonces (timestamp-based)
-- No `__validate__` logic — always reverts (`NOT_SUPPORTED`). Actual validation happens inside `execute_from_outside_v2`
-
-## Security Model
-
-| Property | Mechanism |
-|----------|-----------|
-| **Authorization** | Ed25519 on-chain signature verification (Garaga v1.0.1) |
-| **Replay protection** | Per-nonce mapping in contract storage |
-| **Time bounds** | `execute_after` / `execute_before` window validation |
-| **Caller restriction** | `caller: 0x0` (ANY_CALLER) — security is in the signature, not caller identity |
-| **Self-custodial** | Only the holder of the Ed25519 private key can authorize operations |
-| **Paymaster compatible** | `__execute__` exists for fee estimation; actual execution via SNIP-9 V2 |
-
-### If the server is compromised
-
-The attacker **cannot execute any wallet operation**. They can only pay gas (via paymaster), but without the user's Ed25519 private key (held in Phantom), no calls can be authorized.
-
-## Dependencies
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `starknet` | 2.14.0 | Cairo core library |
-| `openzeppelin` | v3.0.0 | SRC5 introspection, upgradeable component |
-| `garaga` | v1.0.1 | On-chain Ed25519 signature verification |
-| `snforge_std` | v0.54.1 | Testing framework (dev only) |
-
-## Build & Test
-
-```bash
-# Build
-scarb build
-
-# Run tests (9/9 pass)
-scarb test
-```
-
-### Test Coverage
-
-| Test | What it verifies |
-|------|-----------------|
-| `test_initial_state` | Owner pubkey stored correctly |
-| `test_nonce_availability` | Fresh nonce is available |
-| `test_outside_execution_too_early` | Rejects if `block_timestamp < execute_after` |
-| `test_outside_execution_too_late` | Rejects if `block_timestamp > execute_before` |
-| `test_outside_execution_wrong_caller` | Rejects if caller doesn't match (non-ANY_CALLER) |
-| `test_outside_execution_valid_ed25519` | Full Garaga Ed25519 verification with test fixtures |
-| `test_outside_execution_wrong_owner` | Rejects signature from wrong key |
-| `test_outside_execution_ed25519_replay` | Rejects replay (duplicate nonce) |
-| `test_poseidon_hash_compatibility` | Poseidon hash matches starknet.js |
-
-## Mainnet Deployment
-
-- **Class hash**: `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13`
-- **Network**: Starknet Mainnet
-- **Ed25519 verification cost**: ~33M L2 gas per call (Garaga v1.0.1)
-
-## Project Structure
+Source layout:
 
 ```
 src/
-├── lib.cairo              # Module declarations
-├── wallet.cairo           # Main contract (SNIP-9 V2 + OE encoding)
-├── outside_execution.cairo # OutsideExecution struct + ISRC9_V2 interface
-└── ed25519/
-    ├── interface.cairo    # IShhhWallet trait
-    └── component.cairo    # Ed25519 owner storage component
+├── lib.cairo                       # module tree for V7 + V8
+├── account.cairo                   # V8 main contract skeleton
+├── signer/
+│   ├── interface.cairo             # ISigner trait + kind-tag registry
+│   ├── ed25519/verifier.cairo
+│   ├── secp256k1/verifier.cairo
+│   ├── webauthn_p256/verifier.cairo
+│   └── stark/verifier.cairo
+├── owner_set/                      # multi-signer storage + invariants
+├── governance/                     # timelocked pending-ops engine
+├── recovery/                       # guardian + 7d recovery window
+├── session_key/                    # ported from chipi-pay/sessions-smart-contract
+├── spending_policy/                # ported from chipi-pay/sessions-smart-contract
+│
+├── wallet.cairo                    # V7 retained for reference
+├── outside_execution.cairo         # V7 retained for reference
+└── ed25519/                        # V7 retained for reference
+
 tests/
-└── test_contract.cairo    # 9 tests (SNIP-9 + Ed25519 + Poseidon)
+├── audit_2026_04_20/               # one regression file per audit finding
+├── signer/                         # per-verifier-class tests (valid + negative)
+├── owner_set/                      # owner-set invariant + threshold tests
+├── recovery/                       # recovery state-machine tests
+└── test_contract.cairo             # V7 suite (9/9 passing)
 ```
+
+## Docs
+
+- [`docs/shhh-v8-robust-plan.md`](./docs/shhh-v8-robust-plan.md) — build plan, 12-week milestones, security model.
+- [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md) — SNIP draft, ready to open against `starknet-io/SNIPs`.
+- [`docs/audit-response-omar.md`](./docs/audit-response-omar.md) — letter to Omar documenting every finding's disposition.
+- [`docs/shhh-v8-design.md`](./docs/shhh-v8-design.md) — earlier phased-V8 design, superseded by the robust plan but kept for context.
+
+## Build & test
+
+```bash
+scarb build                               # compiles V7 + V8 skeleton
+scarb fmt --check
+snforge test                              # V7 suite + V8 stubs
+snforge test --filter audit_2026_04_20    # audit regressions only
+```
+
+V8 is currently a skeleton: the ISigner trait, owner-set, governance, recovery, session-key, and spending-policy components compile; the four verifier classes and the main account's `execute_from_outside_v2` body are TODO-tagged for implementation. See `docs/shhh-v8-robust-plan.md` §9 for the week-by-week implementation track.
 
 ## License
 
