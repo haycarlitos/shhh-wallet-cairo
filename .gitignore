@@ -1,2 +1,4 @@
 target/
 .snfoundry_cache/
+scripts/ts/node_modules/
+scripts/ts/package-lock.json

@@ -8,9 +8,9 @@ starknet = "2.14.0"
 openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v3.0.0" }
 garaga = { git = "https://github.com/keep-starknet-strange/garaga.git", tag = "v1.0.1" }
 
-# Pinned to match local snforge toolchain (audit response §Tooling).
+# Pinned to latest stable starknet-foundry (engineering rule 2 in the V8 plan).
 [dev-dependencies]
-snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.54.1" }
+snforge_std = { git = "https://github.com/foundry-rs/starknet-foundry.git", tag = "v0.59.0" }
 
 [[target.starknet-contract]]
 sierra = true
