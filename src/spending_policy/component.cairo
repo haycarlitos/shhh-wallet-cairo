@@ -6,14 +6,12 @@
 
 #[starknet::component]
 pub mod SpendingPolicyComponent {
-    use starknet::ContractAddress;
-    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
-    use starknet::get_block_timestamp;
     use starknet::account::Call;
+    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
+    use starknet::{ContractAddress, get_block_timestamp};
     use crate::spending_policy::interface::{
-        SpendingPolicy,
-        TRANSFER_SELECTOR, APPROVE_SELECTOR,
-        INCREASE_ALLOWANCE_SELECTOR, INCREASE_ALLOWANCE_CAMEL_SELECTOR,
+        APPROVE_SELECTOR, INCREASE_ALLOWANCE_CAMEL_SELECTOR, INCREASE_ALLOWANCE_SELECTOR,
+        SpendingPolicy, TRANSFER_SELECTOR,
     };
 
     // ----------------------------------------------------------------
@@ -75,7 +73,6 @@ pub mod SpendingPolicyComponent {
         +HasAccountOwner<TContractState>,
         +Drop<TContractState>,
     > of InternalTrait<TContractState> {
-
         // ---------- policy management (owner-gated) ----------
 
         fn set_spending_policy(
@@ -98,23 +95,22 @@ pub mod SpendingPolicyComponent {
             };
             self.policies.write((session_key, token), policy);
 
-            self.emit(SpendingPolicySet {
-                session_key, token, max_per_call, max_per_window, window_seconds,
-            });
+            self
+                .emit(
+                    SpendingPolicySet {
+                        session_key, token, max_per_call, max_per_window, window_seconds,
+                    },
+                );
         }
 
         fn get_spending_policy(
-            self: @ComponentState<TContractState>,
-            session_key: felt252,
-            token: ContractAddress,
+            self: @ComponentState<TContractState>, session_key: felt252, token: ContractAddress,
         ) -> SpendingPolicy {
             self.policies.read((session_key, token))
         }
 
         fn remove_spending_policy(
-            ref self: ComponentState<TContractState>,
-            session_key: felt252,
-            token: ContractAddress,
+            ref self: ComponentState<TContractState>, session_key: felt252, token: ContractAddress,
         ) {
             let contract_state = self.get_contract();
             HasAccountOwner::assert_only_self(contract_state);
@@ -152,15 +148,15 @@ pub mod SpendingPolicyComponent {
         /// 4. Check spent_in_window + amount <= policy.max_per_window
         /// 5. Update spent_in_window
         fn check_and_update_spending(
-            ref self: ComponentState<TContractState>,
-            session_key: felt252,
-            calls: Span<Call>,
+            ref self: ComponentState<TContractState>, session_key: felt252, calls: Span<Call>,
         ) {
             let now = get_block_timestamp();
 
             let mut i: u32 = 0;
             loop {
-                if i >= calls.len() { break; }
+                if i >= calls.len() {
+                    break;
+                }
                 let call = calls.at(i);
                 let sel = *call.selector;
 
@@ -176,11 +172,17 @@ pub mod SpendingPolicyComponent {
                         assert(call.calldata.len() >= 3, 'Spending: calldata too short');
                         let amount_low: u128 = match (*call.calldata.at(1)).try_into() {
                             Option::Some(v) => v,
-                            Option::None => { panic!("Spending: invalid amount"); 0 },
+                            Option::None => {
+                                panic!("Spending: invalid amount");
+                                0
+                            },
                         };
                         let amount_high: u128 = match (*call.calldata.at(2)).try_into() {
                             Option::Some(v) => v,
-                            Option::None => { panic!("Spending: invalid amount"); 0 },
+                            Option::None => {
+                                panic!("Spending: invalid amount");
+                                0
+                            },
                         };
                         let amount: u256 = u256 { low: amount_low, high: amount_high };
 
@@ -196,7 +198,7 @@ pub mod SpendingPolicyComponent {
                         // Check cumulative window limit
                         assert(
                             policy.spent_in_window + amount <= policy.max_per_window,
-                            'Spending: exceeds window limit'
+                            'Spending: exceeds window limit',
                         );
 
                         // Update spent amount

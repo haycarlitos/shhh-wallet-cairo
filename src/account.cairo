@@ -29,26 +29,21 @@
 
 #[starknet::contract(account)]
 pub mod ShhhAccount {
-    use starknet::{
-        ContractAddress, ClassHash, get_caller_address, get_contract_address,
-        get_block_timestamp, get_tx_info,
-    };
-    use starknet::storage::{
-        Map, StoragePointerReadAccess, StoragePointerWriteAccess,
-        StorageMapReadAccess, StorageMapWriteAccess,
-    };
     use starknet::account::Call;
-
-    use crate::owner_set::component::OwnerSetComponent;
+    use starknet::storage::{
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess,
+    };
+    use starknet::{
+        ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
+        get_tx_info,
+    };
     use crate::governance::component::GovernanceComponent;
+    use crate::owner_set::component::OwnerSetComponent;
     use crate::recovery::component::RecoveryComponent;
     use crate::session_key::component::SessionKeyComponent;
+    use crate::signer::interface::{ISIGNER_ID, parse_owner_envelope_header};
     use crate::spending_policy::component::SpendingPolicyComponent;
-
-    use crate::signer::interface::{
-        ISIGNER_ID,
-        parse_owner_envelope_header,
-    };
 
     // ------------------------------------------------------------------
     // Audit-driven bounds (M-2, M-3).
@@ -57,25 +52,25 @@ pub mod ShhhAccount {
     //   - Ed25519 + Garaga hints ≈ 700 felts ≪ MAX_SIGNATURE_FELTS per envelope.
     //   - CCTP pre-sign OE finishes in 20–30 min ≪ 2h cap.
     // ------------------------------------------------------------------
-    pub const MAX_CALLS:                       u32 = 16;
-    pub const MAX_TOTAL_CALLDATA_FELTS:        u32 = 1024;
-    pub const MAX_SIGNATURE_FELTS:             u32 = 1024;
+    pub const MAX_CALLS: u32 = 16;
+    pub const MAX_TOTAL_CALLDATA_FELTS: u32 = 1024;
+    pub const MAX_SIGNATURE_FELTS: u32 = 1024;
     pub const MAX_ANY_CALLER_VALIDITY_SECONDS: u64 = 7_200;
 
     // ------------------------------------------------------------------
     // Component wiring
     // ------------------------------------------------------------------
 
-    component!(path: OwnerSetComponent,       storage: owners,          event: OwnerSetEvent);
-    component!(path: GovernanceComponent,     storage: governance,      event: GovernanceEvent);
-    component!(path: RecoveryComponent,       storage: recovery,        event: RecoveryEvent);
-    component!(path: SessionKeyComponent,     storage: session_key,     event: SessionKeyEvent);
+    component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
+    component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
+    component!(path: RecoveryComponent, storage: recovery, event: RecoveryEvent);
+    component!(path: SessionKeyComponent, storage: session_key, event: SessionKeyEvent);
     component!(path: SpendingPolicyComponent, storage: spending_policy, event: SpendingPolicyEvent);
 
-    impl OwnerSetInternal       = OwnerSetComponent::InternalImpl<ContractState>;
-    impl GovernanceInternal     = GovernanceComponent::InternalImpl<ContractState>;
-    impl RecoveryInternal       = RecoveryComponent::InternalImpl<ContractState>;
-    impl SessionKeyInternal     = SessionKeyComponent::InternalImpl<ContractState>;
+    impl OwnerSetInternal = OwnerSetComponent::InternalImpl<ContractState>;
+    impl GovernanceInternal = GovernanceComponent::InternalImpl<ContractState>;
+    impl RecoveryInternal = RecoveryComponent::InternalImpl<ContractState>;
+    impl SessionKeyInternal = SessionKeyComponent::InternalImpl<ContractState>;
     impl SpendingPolicyInternal = SpendingPolicyComponent::InternalImpl<ContractState>;
 
     // HasAccountOwner plumbing — session_key + spending_policy components
@@ -102,21 +97,23 @@ pub mod ShhhAccount {
         // Verifier class registry — kind_tag → library-call target.
         // Governed by unanimous existing owners (see plan §3.3).
         verifier_classes: Map<felt252, ClassHash>,
-
         // SNIP-9 V2 nonce replay protection.
         oe_nonces: Map<felt252, bool>,
-
         // Primary-owner binding, captured at deploy. Fixes the address
         // salt so adding/removing owners later does not mutate the
         // address. (§3.8 deterministic addresses.)
-        primary_kind:        felt252,
+        primary_kind: felt252,
         primary_pubkey_hash: felt252,
-
-        #[substorage(v0)] owners:          OwnerSetComponent::Storage,
-        #[substorage(v0)] governance:      GovernanceComponent::Storage,
-        #[substorage(v0)] recovery:        RecoveryComponent::Storage,
-        #[substorage(v0)] session_key:     SessionKeyComponent::Storage,
-        #[substorage(v0)] spending_policy: SpendingPolicyComponent::Storage,
+        #[substorage(v0)]
+        owners: OwnerSetComponent::Storage,
+        #[substorage(v0)]
+        governance: GovernanceComponent::Storage,
+        #[substorage(v0)]
+        recovery: RecoveryComponent::Storage,
+        #[substorage(v0)]
+        session_key: SessionKeyComponent::Storage,
+        #[substorage(v0)]
+        spending_policy: SpendingPolicyComponent::Storage,
     }
 
     // ------------------------------------------------------------------
@@ -126,23 +123,30 @@ pub mod ShhhAccount {
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
-        #[flat] OwnerSetEvent:       OwnerSetComponent::Event,
-        #[flat] GovernanceEvent:     GovernanceComponent::Event,
-        #[flat] RecoveryEvent:       RecoveryComponent::Event,
-        #[flat] SessionKeyEvent:     SessionKeyComponent::Event,
-        #[flat] SpendingPolicyEvent: SpendingPolicyComponent::Event,
-        VerifierClassAdded:          VerifierClassAdded,
-        VerifierClassRemoved:        VerifierClassRemoved,
+        #[flat]
+        OwnerSetEvent: OwnerSetComponent::Event,
+        #[flat]
+        GovernanceEvent: GovernanceComponent::Event,
+        #[flat]
+        RecoveryEvent: RecoveryComponent::Event,
+        #[flat]
+        SessionKeyEvent: SessionKeyComponent::Event,
+        #[flat]
+        SpendingPolicyEvent: SpendingPolicyComponent::Event,
+        VerifierClassAdded: VerifierClassAdded,
+        VerifierClassRemoved: VerifierClassRemoved,
     }
 
     #[derive(Drop, starknet::Event)]
     struct VerifierClassAdded {
-        #[key] kind: felt252,
+        #[key]
+        kind: felt252,
         class_hash: ClassHash,
     }
     #[derive(Drop, starknet::Event)]
     struct VerifierClassRemoved {
-        #[key] kind: felt252,
+        #[key]
+        kind: felt252,
     }
 
     // ------------------------------------------------------------------
@@ -220,8 +224,7 @@ pub mod ShhhAccount {
     fn __execute__(ref self: ContractState, calls: Array<Call>) -> Array<Span<felt252>> {
         let caller = get_caller_address();
         assert(
-            caller.is_zero() || caller == get_contract_address(),
-            'SHHH: C-1 unauthorized caller',
+            caller.is_zero() || caller == get_contract_address(), 'SHHH: C-1 unauthorized caller',
         );
         let tx_info = get_tx_info().unbox();
         let v: u32 = tx_info.version.try_into().unwrap_or(0_u32);
@@ -236,8 +239,7 @@ pub mod ShhhAccount {
 
     #[external(v0)]
     fn execute_from_outside_v2(
-        ref self: ContractState,
-        // TODO(v8): replace with the official `OutsideExecution` struct
+        ref self: ContractState, // TODO(v8): replace with the official `OutsideExecution` struct
         // from OZ's SRC9 once the typed-data adapter is wired.
         _outside_execution: Span<felt252>,
         _signature: Span<felt252>,
@@ -285,10 +287,14 @@ pub mod ShhhAccount {
     // ------------------------------------------------------------------
 
     #[external(v0)]
-    fn primary_kind(self: @ContractState) -> felt252 { self.primary_kind.read() }
+    fn primary_kind(self: @ContractState) -> felt252 {
+        self.primary_kind.read()
+    }
 
     #[external(v0)]
-    fn primary_pubkey_hash(self: @ContractState) -> felt252 { self.primary_pubkey_hash.read() }
+    fn primary_pubkey_hash(self: @ContractState) -> felt252 {
+        self.primary_pubkey_hash.read()
+    }
 
     #[external(v0)]
     fn supports_interface(self: @ContractState, interface_id: felt252) -> bool {
@@ -315,7 +321,7 @@ pub mod ShhhAccount {
                 },
                 Option::None => { break; },
             };
-        };
+        }
         results
     }
 

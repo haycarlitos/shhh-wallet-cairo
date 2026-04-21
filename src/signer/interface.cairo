@@ -6,8 +6,6 @@
 //! human-readable in explorers and logs and impossible to collide with a
 //! raw public key value.
 
-use starknet::ClassHash;
-
 // ------------------------------------------------------------------
 // SRC-5 interface IDs
 // ------------------------------------------------------------------
@@ -22,28 +20,28 @@ pub const ISIGNER_ID: felt252 = 0x0; // TODO(v8): compute final starknetKeccak
 // ------------------------------------------------------------------
 
 // Tier 1 — primitive curves
-pub const KIND_STARK:       felt252 = 'STARK';
-pub const KIND_SECP256K1:   felt252 = 'SECP256K1';
-pub const KIND_ED25519:     felt252 = 'ED25519';
-pub const KIND_P256:        felt252 = 'P256';
-pub const KIND_RSA_2048:    felt252 = 'RSA_2048';
-pub const KIND_BLS12_381:   felt252 = 'BLS12_381';
+pub const KIND_STARK: felt252 = 'STARK';
+pub const KIND_SECP256K1: felt252 = 'SECP256K1';
+pub const KIND_ED25519: felt252 = 'ED25519';
+pub const KIND_P256: felt252 = 'P256';
+pub const KIND_RSA_2048: felt252 = 'RSA_2048';
+pub const KIND_BLS12_381: felt252 = 'BLS12_381';
 
 // Tier 2 — envelope variants
-pub const KIND_WEBAUTHN_P256:    felt252 = 'WEBAUTHN_P256';
+pub const KIND_WEBAUTHN_P256: felt252 = 'WEBAUTHN_P256';
 pub const KIND_EIP191_SECP256K1: felt252 = 'EIP191_SECP256K1';
 pub const KIND_EIP712_SECP256K1: felt252 = 'EIP712_SECP256K1';
-pub const KIND_DKIM_RSA:         felt252 = 'DKIM_RSA';
-pub const KIND_JWT_RS256:        felt252 = 'JWT_RS256';
-pub const KIND_JWT_ES256:        felt252 = 'JWT_ES256';
+pub const KIND_DKIM_RSA: felt252 = 'DKIM_RSA';
+pub const KIND_JWT_RS256: felt252 = 'JWT_RS256';
+pub const KIND_JWT_ES256: felt252 = 'JWT_ES256';
 
 // Tier 3 — reserved, verifier circuits in future SNIP amendments
 pub const KIND_MULTISIG_K_OF_N: felt252 = 'MULTISIG_K_OF_N';
-pub const KIND_GUARDIAN:        felt252 = 'GUARDIAN';
-pub const KIND_ZK_JWT:          felt252 = 'ZK_JWT';
-pub const KIND_ZK_EMAIL:        felt252 = 'ZK_EMAIL';
-pub const KIND_ZK_TLS:          felt252 = 'ZK_TLS';
-pub const KIND_ZK_TOTP:         felt252 = 'ZK_TOTP';
+pub const KIND_GUARDIAN: felt252 = 'GUARDIAN';
+pub const KIND_ZK_JWT: felt252 = 'ZK_JWT';
+pub const KIND_ZK_EMAIL: felt252 = 'ZK_EMAIL';
+pub const KIND_ZK_TLS: felt252 = 'ZK_TLS';
+pub const KIND_ZK_TOTP: felt252 = 'ZK_TOTP';
 
 // ------------------------------------------------------------------
 // Canonical signer trait
@@ -122,9 +120,11 @@ pub fn owner_commitment(kind_tag: felt252, pubkey: Span<felt252>) -> felt252 {
     let mut data: Array<felt252> = array![kind_tag];
     let mut i: u32 = 0;
     loop {
-        if i >= pubkey.len() { break; }
+        if i >= pubkey.len() {
+            break;
+        }
         data.append(*pubkey.at(i));
         i += 1;
-    };
+    }
     core::poseidon::poseidon_hash_span(data.span())
 }

@@ -29,7 +29,9 @@ pub mod Ed25519Verifier {
             signature: Span<felt252>,
         ) -> bool {
             // pubkey layout: [low_u128, high_u128]
-            if pubkey.len() != 2_u32 { return false; }
+            if pubkey.len() != 2_u32 {
+                return false;
+            }
 
             // signature envelope layout (from V7, post-audit):
             //   [ Ry_low, Ry_high, s_low, s_high,
@@ -51,6 +53,8 @@ pub mod Ed25519Verifier {
             core::panic_with_felt252('ED25519: not yet implemented')
         }
 
-        fn kind(self: @ContractState) -> felt252 { KIND_ED25519 }
+        fn kind(self: @ContractState) -> felt252 {
+            KIND_ED25519
+        }
     }
 }

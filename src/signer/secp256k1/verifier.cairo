@@ -25,13 +25,19 @@ pub mod Secp256k1Verifier {
             signature: Span<felt252>,
         ) -> bool {
             // pubkey layout: [x_low, x_high, y_low, y_high] — uncompressed point
-            if pubkey.len() != 4_u32 { return false; }
+            if pubkey.len() != 4_u32 {
+                return false;
+            }
             // signature layout: [r_low, r_high, s_low, s_high, v]
-            if signature.len() != 5_u32 { return false; }
+            if signature.len() != 5_u32 {
+                return false;
+            }
             let _ = message_hash;
             core::panic_with_felt252('SECP256K1: not yet implemented')
         }
 
-        fn kind(self: @ContractState) -> felt252 { KIND_SECP256K1 }
+        fn kind(self: @ContractState) -> felt252 {
+            KIND_SECP256K1
+        }
     }
 }

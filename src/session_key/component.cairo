@@ -7,15 +7,12 @@
 
 #[starknet::component]
 pub mod SessionKeyComponent {
-    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
-    use starknet::account::Call;
-    use starknet::get_block_timestamp;
-    use starknet::get_contract_address;
+    use core::array::{ArrayTrait, SpanTrait};
     use core::poseidon::poseidon_hash_span;
-    use core::array::ArrayTrait;
-    use core::array::SpanTrait;
     use core::traits::Into;
-    use starknet::get_tx_info;
+    use starknet::account::Call;
+    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
+    use starknet::{get_block_timestamp, get_contract_address, get_tx_info};
     use crate::session_key::interface::SessionData;
 
     // ----------------------------------------------------------------
@@ -72,7 +69,6 @@ pub mod SessionKeyComponent {
         +HasAccountOwner<TContractState>,
         +Drop<TContractState>,
     > of InternalTrait<TContractState> {
-
         // ---------- session management (owner-gated) ----------
 
         /// Adds a new session key or updates an existing one.
@@ -97,7 +93,7 @@ pub mod SessionKeyComponent {
                 }
                 self.session_entrypoints.write((session_key, i), 0);
                 i += 1;
-            };
+            }
 
             let sess = SessionData {
                 valid_until,
@@ -115,16 +111,13 @@ pub mod SessionKeyComponent {
                 }
                 self.session_entrypoints.write((session_key, i), *allowed_entrypoints.at(i));
                 i += 1;
-            };
+            }
 
             self.emit(SessionKeyAdded { session_key, valid_until, max_calls });
         }
 
         /// Revokes a session key. Clears all stored entrypoints and zeroes SessionData.
-        fn revoke_session_key(
-            ref self: ComponentState<TContractState>,
-            session_key: felt252,
-        ) {
+        fn revoke_session_key(ref self: ComponentState<TContractState>, session_key: felt252) {
             let contract_state = self.get_contract();
             HasAccountOwner::assert_only_self(contract_state);
 
@@ -138,13 +131,10 @@ pub mod SessionKeyComponent {
                 }
                 self.session_entrypoints.write((session_key, i), 0);
                 i += 1;
-            };
+            }
 
             let sess = SessionData {
-                valid_until: 0,
-                max_calls: 0,
-                calls_used: 0,
-                allowed_entrypoints_len: 0,
+                valid_until: 0, max_calls: 0, calls_used: 0, allowed_entrypoints_len: 0,
             };
             self.session_keys.write(session_key, sess);
 
@@ -152,8 +142,7 @@ pub mod SessionKeyComponent {
         }
 
         fn get_session_data(
-            self: @ComponentState<TContractState>,
-            session_key: felt252,
+            self: @ComponentState<TContractState>, session_key: felt252,
         ) -> SessionData {
             self.session_keys.read(session_key)
         }
@@ -161,17 +150,14 @@ pub mod SessionKeyComponent {
         // ---------- entrypoint helpers ----------
 
         fn get_session_allowed_entrypoints_len(
-            self: @ComponentState<TContractState>,
-            session_key: felt252,
+            self: @ComponentState<TContractState>, session_key: felt252,
         ) -> u32 {
             let s = self.session_keys.read(session_key);
             s.allowed_entrypoints_len
         }
 
         fn get_session_allowed_entrypoint_at(
-            self: @ComponentState<TContractState>,
-            session_key: felt252,
-            index: u32,
+            self: @ComponentState<TContractState>, session_key: felt252, index: u32,
         ) -> felt252 {
             self.session_entrypoints.read((session_key, index))
         }
@@ -190,14 +176,18 @@ pub mod SessionKeyComponent {
         ///   When allowed_entrypoints_len == 0 (open whitelist), sessions CANNOT target
         ///   the account contract itself.
         fn is_session_allowed_for_calls(
-            self: @ComponentState<TContractState>,
-            session_key: felt252,
-            calls: Span<Call>,
+            self: @ComponentState<TContractState>, session_key: felt252, calls: Span<Call>,
         ) -> bool {
             let session = self.session_keys.read(session_key);
-            if session.valid_until == 0 { return false; }
-            if get_block_timestamp() > session.valid_until { return false; }
-            if session.calls_used >= session.max_calls { return false; }
+            if session.valid_until == 0 {
+                return false;
+            }
+            if get_block_timestamp() > session.valid_until {
+                return false;
+            }
+            if session.calls_used >= session.max_calls {
+                return false;
+            }
 
             // SECURITY Layer 1: Admin selector blocklist
             let UPGRADE_SELECTOR: felt252 = selector!("upgrade");
@@ -212,7 +202,9 @@ pub mod SessionKeyComponent {
 
             let mut i: u32 = 0;
             loop {
-                if i >= calls.len() { break; }
+                if i >= calls.len() {
+                    break;
+                }
                 let call = calls.at(i);
                 let sel = *call.selector;
 
@@ -228,49 +220,57 @@ pub mod SessionKeyComponent {
                     return false;
                 }
                 i += 1;
-            };
+            }
 
             // SECURITY Layer 2: Self-call block for empty whitelist
             if session.allowed_entrypoints_len == 0 {
                 let account_address = get_contract_address();
                 let mut i: u32 = 0;
                 loop {
-                    if i >= calls.len() { break; }
+                    if i >= calls.len() {
+                        break;
+                    }
                     let call = calls.at(i);
                     if *call.to == account_address {
                         return false;
                     }
                     i += 1;
-                };
+                }
                 return true;
             }
 
             // Second pass: verify all selectors are in the explicit whitelist
             let mut i: u32 = 0;
             loop {
-                if i >= calls.len() { break; }
+                if i >= calls.len() {
+                    break;
+                }
                 let call = calls.at(i);
                 let selector = *call.selector;
 
                 let mut j: u32 = 0;
                 let mut found = false;
                 loop {
-                    if j >= session.allowed_entrypoints_len { break; }
+                    if j >= session.allowed_entrypoints_len {
+                        break;
+                    }
                     let allowed = self.session_entrypoints.read((session_key, j));
-                    if allowed == selector { found = true; break; }
+                    if allowed == selector {
+                        found = true;
+                        break;
+                    }
                     j += 1;
-                };
-                if !found { return false; }
+                }
+                if !found {
+                    return false;
+                }
                 i += 1;
-            };
+            }
             true
         }
 
         /// Consume one session call (increment counter).
-        fn consume_session_call(
-            ref self: ComponentState<TContractState>,
-            session_key: felt252,
-        ) {
+        fn consume_session_call(ref self: ComponentState<TContractState>, session_key: felt252) {
             let mut session = self.session_keys.read(session_key);
             session.calls_used += 1;
             self.session_keys.write(session_key, session);
@@ -280,9 +280,7 @@ pub mod SessionKeyComponent {
         ///
         /// Binds: account address, chain_id, nonce, valid_until, and all call data.
         fn session_message_hash(
-            self: @ComponentState<TContractState>,
-            calls: Span<Call>,
-            valid_until: u64,
+            self: @ComponentState<TContractState>, calls: Span<Call>, valid_until: u64,
         ) -> felt252 {
             let tx_info = get_tx_info().unbox();
             let mut hash_data = array![];
@@ -310,10 +308,10 @@ pub mod SessionKeyComponent {
                     }
                     hash_data.append((*call.calldata.at(j)).into());
                     j += 1;
-                };
+                }
 
                 i += 1;
-            };
+            }
 
             poseidon_hash_span(hash_data.span())
         }

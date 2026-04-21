@@ -21,7 +21,7 @@ pub trait ISessionKeyManager<TContractState> {
         session_key: felt252,
         valid_until: u64,
         max_calls: u32,
-        allowed_entrypoints: Array<felt252>
+        allowed_entrypoints: Array<felt252>,
     );
     fn revoke_session_key(ref self: TContractState, session_key: felt252);
     fn get_session_data(self: @TContractState, session_key: felt252) -> SessionData;

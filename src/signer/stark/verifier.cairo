@@ -23,16 +23,17 @@ pub mod StarkVerifier {
         ) -> bool {
             // STARK owner envelope payload: [r, s]
             // pubkey is a single felt252
-            if pubkey.len() != 1_u32 { return false; }
-            if signature.len() != 2_u32 { return false; }
-            check_ecdsa_signature(
-                message_hash,
-                *pubkey.at(0),
-                *signature.at(0),
-                *signature.at(1),
-            )
+            if pubkey.len() != 1_u32 {
+                return false;
+            }
+            if signature.len() != 2_u32 {
+                return false;
+            }
+            check_ecdsa_signature(message_hash, *pubkey.at(0), *signature.at(0), *signature.at(1))
         }
 
-        fn kind(self: @ContractState) -> felt252 { KIND_STARK }
+        fn kind(self: @ContractState) -> felt252 {
+            KIND_STARK
+        }
     }
 }

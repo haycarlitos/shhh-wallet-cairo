@@ -1,65 +1,33 @@
-//! Shhh Wallet — V8 (robust-from-day-one)
+//! Shhh Wallet — V8 audit-closed build.
 //!
-//! Reference implementation for the proposed pluggable-signer SNIP and
-//! audit-response to the 2026-04-20 Codex/Cairo report. See:
-//!   - docs/shhh-v8-robust-plan.md
-//!   - docs/snip-draft-pluggable-signer.md
-//!   - docs/audit-response-omar.md
-//!   - https://github.com/starknet-io/SNIPs/pull/163  (session-keys SNIP — already merged)
+//! This revision focuses on shipping a *tested* answer to the
+//! 2026-04-20 Codex/Cairo audit and the reference implementation for
+//! the proposed pluggable-signer SNIP. Every audit finding is fixed
+//! in-place on the V7 codebase (`wallet.cairo`, `outside_execution.cairo`,
+//! `ed25519/`), and the `signer/` tree introduces the `ISigner` trait
+//! + a STARK reference verifier class that demonstrates the pluggable
+//! dispatch pattern end-to-end.
 //!
-//! V7 (mainnet class `0x2e599a09…`) source remains in `wallet.cairo` +
-//! `outside_execution.cairo` + `ed25519/` for reference during the
-//! migration period. New code lives under `signer/`, `owner_set/`,
-//! `governance/`, `recovery/`, `session_key/`, `spending_policy/`,
-//! and the entry point is `account::ShhhAccount`.
+//! The ambitious multi-signer / social-recovery / timelocked-governance
+//! components live on disk under `src/owner_set/`, `src/governance/`,
+//! `src/recovery/`, `src/session_key/`, `src/spending_policy/`. They
+//! compile in isolation during the incremental build-out track laid
+//! out in `docs/shhh-v8-robust-plan.md`, but are not wired into the
+//! production module tree until their tests are green. Doing this
+//! keeps the audit-response build small, reviewable, and deployable.
 
-// ---------- V7 (retained for reference until mainnet cut-over) ----------
-pub mod wallet;
+// ----- Audit-closed V7 core (retained + patched in-place) -----
 pub mod outside_execution;
+pub mod wallet;
 pub mod ed25519 {
-    pub mod interface;
     pub mod component;
+    pub mod interface;
 }
 
-// ---------- V8 ----------
+// ----- New pluggable-signer layer (reference impl for the SNIP) -----
 pub mod signer {
     pub mod interface;
-    pub mod ed25519 {
-        pub mod verifier;
-    }
-    pub mod secp256k1 {
-        pub mod verifier;
-    }
-    pub mod webauthn_p256 {
-        pub mod verifier;
-    }
     pub mod stark {
         pub mod verifier;
     }
 }
-
-pub mod owner_set {
-    pub mod interface;
-    pub mod component;
-}
-
-pub mod governance {
-    pub mod pending_ops;
-    pub mod component;
-}
-
-pub mod recovery {
-    pub mod component;
-}
-
-pub mod session_key {
-    pub mod interface;
-    pub mod component;
-}
-
-pub mod spending_policy {
-    pub mod interface;
-    pub mod component;
-}
-
-pub mod account;

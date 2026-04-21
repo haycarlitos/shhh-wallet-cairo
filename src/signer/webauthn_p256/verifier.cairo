@@ -33,7 +33,9 @@ pub mod WebAuthnP256Verifier {
             signature: Span<felt252>,
         ) -> bool {
             // pubkey layout: [x_low, x_high, y_low, y_high]
-            if pubkey.len() != 4_u32 { return false; }
+            if pubkey.len() != 4_u32 {
+                return false;
+            }
             // signature layout (bounded by M-3):
             //   [ r_low, r_high, s_low, s_high,
             //     auth_data_len, auth_data...,
@@ -43,6 +45,8 @@ pub mod WebAuthnP256Verifier {
             core::panic_with_felt252('WEBAUTHN_P256: not yet implemented')
         }
 
-        fn kind(self: @ContractState) -> felt252 { KIND_WEBAUTHN_P256 }
+        fn kind(self: @ContractState) -> felt252 {
+            KIND_WEBAUTHN_P256
+        }
     }
 }

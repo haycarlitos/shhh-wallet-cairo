@@ -32,14 +32,10 @@ pub trait ISessionSpendingPolicy<TContractState> {
         window_seconds: u64,
     );
     fn get_spending_policy(
-        self: @TContractState,
-        session_key: felt252,
-        token: ContractAddress,
+        self: @TContractState, session_key: felt252, token: ContractAddress,
     ) -> SpendingPolicy;
     fn remove_spending_policy(
-        ref self: TContractState,
-        session_key: felt252,
-        token: ContractAddress,
+        ref self: TContractState, session_key: felt252, token: ContractAddress,
     );
 }
 

@@ -8,8 +8,8 @@
 
 #[starknet::component]
 pub mod RecoveryComponent {
-    use starknet::storage::{StorageMapReadAccess, StorageMapWriteAccess};
     use starknet::get_block_timestamp;
+    use starknet::storage::{StorageMapReadAccess, StorageMapWriteAccess};
 
     // ------------------------------------------------------------------
     // Pending recovery record
@@ -17,15 +17,15 @@ pub mod RecoveryComponent {
 
     #[derive(Drop, Copy, Serde, starknet::Store)]
     pub struct PendingRecovery {
-        pub initiated_at:    u64,
-        pub valid_after:     u64,
-        pub new_owner_hash:  felt252, // poseidon commitment of new owner record
-        pub is_active:       bool,
+        pub initiated_at: u64,
+        pub valid_after: u64,
+        pub new_owner_hash: felt252, // poseidon commitment of new owner record
+        pub is_active: bool,
     }
 
-    pub const ERR_NO_PENDING:         felt252 = 'RECOVERY: no pending op';
-    pub const ERR_PENDING_EXISTS:     felt252 = 'RECOVERY: already pending';
-    pub const ERR_TIMELOCK_NOT_MET:   felt252 = 'RECOVERY: timelock not met';
+    pub const ERR_NO_PENDING: felt252 = 'RECOVERY: no pending op';
+    pub const ERR_PENDING_EXISTS: felt252 = 'RECOVERY: already pending';
+    pub const ERR_TIMELOCK_NOT_MET: felt252 = 'RECOVERY: timelock not met';
 
     // ------------------------------------------------------------------
     // Storage
@@ -68,11 +68,8 @@ pub mod RecoveryComponent {
 
     #[generate_trait]
     pub impl InternalImpl<
-        TContractState,
-        +HasComponent<TContractState>,
-        +Drop<TContractState>,
+        TContractState, +HasComponent<TContractState>, +Drop<TContractState>,
     > of InternalTrait<TContractState> {
-
         /// Called after guardian-threshold authentication.
         fn initiate(
             ref self: ComponentState<TContractState>,
@@ -84,9 +81,9 @@ pub mod RecoveryComponent {
             let now = get_block_timestamp();
             let rec = PendingRecovery {
                 initiated_at: now,
-                valid_after:  now + timelock_seconds,
+                valid_after: now + timelock_seconds,
                 new_owner_hash,
-                is_active:    true,
+                is_active: true,
             };
             self.pending.write(rec);
             self.emit(RecoveryInitiated { new_owner_hash, valid_after: rec.valid_after });
@@ -97,10 +94,7 @@ pub mod RecoveryComponent {
             let existing = self.pending.read();
             assert(existing.is_active, ERR_NO_PENDING);
             let cleared = PendingRecovery {
-                initiated_at: 0_u64,
-                valid_after: 0_u64,
-                new_owner_hash: 0,
-                is_active: false,
+                initiated_at: 0_u64, valid_after: 0_u64, new_owner_hash: 0, is_active: false,
             };
             self.pending.write(cleared);
             self.emit(RecoveryCancelled {});
@@ -114,10 +108,7 @@ pub mod RecoveryComponent {
             assert(get_block_timestamp() >= existing.valid_after, ERR_TIMELOCK_NOT_MET);
             let new_owner_hash = existing.new_owner_hash;
             let cleared = PendingRecovery {
-                initiated_at: 0_u64,
-                valid_after: 0_u64,
-                new_owner_hash: 0,
-                is_active: false,
+                initiated_at: 0_u64, valid_after: 0_u64, new_owner_hash: 0, is_active: false,
             };
             self.pending.write(cleared);
             self.emit(RecoveryFinalized { new_owner_hash });

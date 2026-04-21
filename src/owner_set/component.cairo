@@ -4,13 +4,12 @@
 
 #[starknet::component]
 pub mod OwnerSetComponent {
-    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
     use starknet::get_block_timestamp;
+    use starknet::storage::{Map, StorageMapReadAccess, StorageMapWriteAccess};
     use crate::owner_set::interface::{
-        OwnerRecord,
-        ROLE_OWNER, ROLE_GUARDIAN, ROLE_RECOVERY_ONLY,
-        ERR_ZERO_OWNERS, ERR_THRESHOLD_TOO_HIGH, ERR_THRESHOLD_ZERO,
-        ERR_DUPLICATE_HASH, ERR_UNKNOWN_OWNER, ERR_ROLE_INVALID, ERR_WEIGHT_ZERO,
+        ERR_DUPLICATE_HASH, ERR_ROLE_INVALID, ERR_THRESHOLD_TOO_HIGH, ERR_THRESHOLD_ZERO,
+        ERR_UNKNOWN_OWNER, ERR_WEIGHT_ZERO, ERR_ZERO_OWNERS, OwnerRecord, ROLE_GUARDIAN, ROLE_OWNER,
+        ROLE_RECOVERY_ONLY,
     };
 
     // ------------------------------------------------------------------
@@ -19,16 +18,16 @@ pub mod OwnerSetComponent {
 
     #[storage]
     pub struct Storage {
-        pub owners:           Map<u32, OwnerRecord>,
-        pub owner_by_hash:    Map<felt252, u32>, // 0 = absent, otherwise owner_id + 1
-        pub owners_count:     u32,
-        pub active_count:     u32,
-        pub threshold:        u8,
+        pub owners: Map<u32, OwnerRecord>,
+        pub owner_by_hash: Map<felt252, u32>, // 0 = absent, otherwise owner_id + 1
+        pub owners_count: u32,
+        pub active_count: u32,
+        pub threshold: u8,
         pub primary_owner_id: u32,
         // Append-only pubkey bytes log. Each owner's pubkey bytes live at
         // slots [pubkey_slot .. pubkey_slot + pubkey_len).
-        pub pubkey_bytes:     Map<u64, felt252>,
-        pub pubkey_cursor:    u64,
+        pub pubkey_bytes: Map<u64, felt252>,
+        pub pubkey_cursor: u64,
     }
 
     // ------------------------------------------------------------------
@@ -46,7 +45,8 @@ pub mod OwnerSetComponent {
 
     #[derive(Drop, starknet::Event)]
     pub struct OwnerAdded {
-        #[key] pub owner_id: u32,
+        #[key]
+        pub owner_id: u32,
         pub kind: felt252,
         pub pubkey_hash: felt252,
         pub role: felt252,
@@ -55,12 +55,14 @@ pub mod OwnerSetComponent {
 
     #[derive(Drop, starknet::Event)]
     pub struct OwnerRemoved {
-        #[key] pub owner_id: u32,
+        #[key]
+        pub owner_id: u32,
     }
 
     #[derive(Drop, starknet::Event)]
     pub struct OwnerRotated {
-        #[key] pub owner_id: u32,
+        #[key]
+        pub owner_id: u32,
         pub new_pubkey_hash: felt252,
     }
 
@@ -80,11 +82,8 @@ pub mod OwnerSetComponent {
 
     #[generate_trait]
     pub impl InternalImpl<
-        TContractState,
-        +HasComponent<TContractState>,
-        +Drop<TContractState>,
+        TContractState, +HasComponent<TContractState>, +Drop<TContractState>,
     > of InternalTrait<TContractState> {
-
         fn initialize_primary(
             ref self: ComponentState<TContractState>,
             kind: felt252,
@@ -97,13 +96,13 @@ pub mod OwnerSetComponent {
             let record = OwnerRecord {
                 kind,
                 pubkey_hash,
-                pubkey_len:  pubkey_bytes.len(),
+                pubkey_len: pubkey_bytes.len(),
                 pubkey_slot: slot,
-                role:        ROLE_OWNER,
-                weight:      1_u8,
-                added_at:    get_block_timestamp(),
+                role: ROLE_OWNER,
+                weight: 1_u8,
+                added_at: get_block_timestamp(),
                 label,
-                revoked:     false,
+                revoked: false,
             };
             self.owners.write(0_u32, record);
             self.owner_by_hash.write(pubkey_hash, 1_u32);
@@ -112,9 +111,12 @@ pub mod OwnerSetComponent {
             self.threshold.write(1_u8);
             self.primary_owner_id.write(0_u32);
 
-            self.emit(OwnerAdded {
-                owner_id: 0_u32, kind, pubkey_hash, role: ROLE_OWNER, weight: 1_u8,
-            });
+            self
+                .emit(
+                    OwnerAdded {
+                        owner_id: 0_u32, kind, pubkey_hash, role: ROLE_OWNER, weight: 1_u8,
+                    },
+                );
         }
 
         fn add_owner(
@@ -139,13 +141,15 @@ pub mod OwnerSetComponent {
             let slot = self._append_pubkey_bytes(pubkey_bytes);
             let next_id = self.owners_count.read();
             let record = OwnerRecord {
-                kind, pubkey_hash,
-                pubkey_len:  pubkey_bytes.len(),
+                kind,
+                pubkey_hash,
+                pubkey_len: pubkey_bytes.len(),
                 pubkey_slot: slot,
-                role, weight,
-                added_at:    get_block_timestamp(),
+                role,
+                weight,
+                added_at: get_block_timestamp(),
                 label,
-                revoked:     false,
+                revoked: false,
             };
             self.owners.write(next_id, record);
             self.owner_by_hash.write(pubkey_hash, next_id + 1_u32);
@@ -195,9 +199,9 @@ pub mod OwnerSetComponent {
             self.owner_by_hash.write(record.pubkey_hash, 0_u32);
             let slot = self._append_pubkey_bytes(new_pubkey_bytes);
             record.pubkey_hash = new_pubkey_hash;
-            record.pubkey_len  = new_pubkey_bytes.len();
+            record.pubkey_len = new_pubkey_bytes.len();
             record.pubkey_slot = slot;
-            record.added_at    = get_block_timestamp();
+            record.added_at = get_block_timestamp();
             self.owners.write(owner_id, record);
             self.owner_by_hash.write(new_pubkey_hash, owner_id + 1_u32);
 
@@ -222,11 +226,13 @@ pub mod OwnerSetComponent {
             let mut out: Array<felt252> = array![];
             let mut i: u32 = 0;
             loop {
-                if i >= record.pubkey_len { break; }
+                if i >= record.pubkey_len {
+                    break;
+                }
                 let slot: u64 = record.pubkey_slot + i.into();
                 out.append(self.pubkey_bytes.read(slot));
                 i += 1;
-            };
+            }
             out
         }
 
@@ -234,7 +240,11 @@ pub mod OwnerSetComponent {
             self: @ComponentState<TContractState>, pubkey_hash: felt252,
         ) -> Option<u32> {
             let v = self.owner_by_hash.read(pubkey_hash);
-            if v == 0_u32 { Option::None } else { Option::Some(v - 1_u32) }
+            if v == 0_u32 {
+                Option::None
+            } else {
+                Option::Some(v - 1_u32)
+            }
         }
 
         // ---------- internals ----------
@@ -245,11 +255,13 @@ pub mod OwnerSetComponent {
             let start = self.pubkey_cursor.read();
             let mut i: u32 = 0;
             loop {
-                if i >= bytes.len() { break; }
+                if i >= bytes.len() {
+                    break;
+                }
                 let slot: u64 = start + i.into();
                 self.pubkey_bytes.write(slot, *bytes.at(i));
                 i += 1;
-            };
+            }
             self.pubkey_cursor.write(start + bytes.len().into());
             start
         }
@@ -261,7 +273,9 @@ pub mod OwnerSetComponent {
             let mut count: u32 = 0;
             let n = self.owners_count.read();
             loop {
-                if i >= n { break; }
+                if i >= n {
+                    break;
+                }
                 if i != excluding {
                     let r = self.owners.read(i);
                     if !r.revoked && r.role == ROLE_OWNER {
@@ -269,7 +283,7 @@ pub mod OwnerSetComponent {
                     }
                 }
                 i += 1;
-            };
+            }
             count
         }
 
@@ -278,13 +292,15 @@ pub mod OwnerSetComponent {
             let mut total: u32 = 0;
             let n = self.owners_count.read();
             loop {
-                if i >= n { break; }
+                if i >= n {
+                    break;
+                }
                 let r = self.owners.read(i);
                 if !r.revoked && r.role == ROLE_OWNER {
                     total += r.weight.into();
                 }
                 i += 1;
-            };
+            }
             total
         }
     }
