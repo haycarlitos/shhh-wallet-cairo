@@ -27,6 +27,9 @@ pub mod ed25519 {
 // ----- New pluggable-signer layer (reference impl for the SNIP) -----
 pub mod signer {
     pub mod interface;
+    pub mod ed25519 {
+        pub mod verifier;
+    }
     pub mod stark {
         pub mod verifier;
     }
