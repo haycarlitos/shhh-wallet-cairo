@@ -19,7 +19,7 @@ use shhh_wallet::outside_execution::{
 };
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_caller_address, start_cheat_chain_id_global,
+    start_cheat_caller_address,
 };
 use starknet::ContractAddress;
 use starknet::account::Call;
