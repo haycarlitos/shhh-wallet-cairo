@@ -12,8 +12,6 @@
 //! and key-leak incidents the user has seconds to seconds-to-days to
 //! detect.
 
-use starknet::ClassHash;
-
 // ------------------------------------------------------------------
 // Operation kinds
 // ------------------------------------------------------------------

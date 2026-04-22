@@ -41,6 +41,12 @@ pub mod owner_set {
     pub mod interface;
 }
 
+// ----- Timelocked governance (Phase 5) -----
+pub mod governance {
+    pub mod component;
+    pub mod pending_ops;
+}
+
 // ----- V8 account (Phase 3 dispatcher + Phase 4 multi-owner) -----
 pub mod account;
 

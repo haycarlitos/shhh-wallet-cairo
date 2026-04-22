@@ -33,6 +33,13 @@ pub mod ShhhAccount {
         ClassHash, get_block_timestamp, get_caller_address, get_contract_address, get_tx_info,
         syscalls,
     };
+    use crate::governance::component::GovernanceComponent;
+    use crate::governance::pending_ops::{
+        DEFAULT_OP_EXPIRY_SECONDS, OP_ADD_OWNER, OP_ADD_VERIFIER_CLASS, OP_REMOVE_OWNER,
+        OP_REMOVE_VERIFIER_CLASS, OP_ROTATE_OWNER, OP_SET_THRESHOLD, PendingOp, TIMELOCK_ADD_OWNER,
+        TIMELOCK_ADD_VERIFIER, TIMELOCK_REMOVE_OWNER, TIMELOCK_REMOVE_VERIFIER,
+        TIMELOCK_ROTATE_OWNER, TIMELOCK_SET_THRESHOLD,
+    };
     use crate::outside_execution::{
         ISRC9_V2, ISRC9_V2_ID, OutsideExecution, SIG_VERSION_V2_SNIP12, compute_snip12_hash,
     };
@@ -53,11 +60,13 @@ pub mod ShhhAccount {
 
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
+    component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
 
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
     impl SRC5InternalImpl = SRC5Component::InternalImpl<ContractState>;
     impl OwnerSetInternal = OwnerSetComponent::InternalImpl<ContractState>;
+    impl GovernanceInternal = GovernanceComponent::InternalImpl<ContractState>;
 
     #[storage]
     struct Storage {
@@ -76,6 +85,8 @@ pub mod ShhhAccount {
         src5: SRC5Component::Storage,
         #[substorage(v0)]
         owners: OwnerSetComponent::Storage,
+        #[substorage(v0)]
+        governance: GovernanceComponent::Storage,
     }
 
     #[event]
@@ -85,6 +96,8 @@ pub mod ShhhAccount {
         SRC5Event: SRC5Component::Event,
         #[flat]
         OwnerSetEvent: OwnerSetComponent::Event,
+        #[flat]
+        GovernanceEvent: GovernanceComponent::Event,
         PrimaryOwnerInitialized: PrimaryOwnerInitialized,
         VerifierClassAdded: VerifierClassAdded,
         VerifierClassRemoved: VerifierClassRemoved,
@@ -291,66 +304,278 @@ pub mod ShhhAccount {
     }
 
     // ------------------------------------------------------------------
-    // Owner-set mutators (self-gated; timelocks arrive in Phase 5).
+    // Phase 5 — timelocked governance.
     //
-    // These are callable only by the account itself — i.e. as a sub-call
-    // of a verified `execute_from_outside_v2` or a protocol-invoked
-    // `__execute__`. They never take an owner-visible signature directly.
+    // Every structural mutation (add_owner / remove_owner / rotate /
+    // threshold / verifier-class) goes through propose → wait-timelock →
+    // execute. During the window any single owner can cancel via OE.
+    // All propose_* + cancel_pending_op are caller==self gated so they
+    // can only be invoked as a sub-call of a verified OE multicall.
+    // execute_pending_* is PERMISSIONLESS after the timelock — the user
+    // has already had the window to cancel.
     // ------------------------------------------------------------------
 
+    #[derive(Drop, starknet::Event)]
+    struct GovernanceProposeSummary {
+        #[key]
+        op_id: felt252,
+        #[key]
+        op_kind: felt252,
+    }
+
+    // -----------------------------------------------------------------
+    // Payload hash helpers — MUST match between propose_* and
+    // execute_* so the stored commitment verifies against the execute
+    // args. Keep these in sync whenever an op's argument shape changes.
+    // -----------------------------------------------------------------
+
+    fn _payload_add_owner(
+        kind: felt252, pubkey_hash: felt252, role: felt252, weight: u8, label: felt252,
+    ) -> felt252 {
+        let weight_felt: felt252 = weight.into();
+        core::poseidon::poseidon_hash_span(
+            array![kind, pubkey_hash, role, weight_felt, label].span(),
+        )
+    }
+
+    fn _payload_remove_owner(owner_id: u32) -> felt252 {
+        let id_felt: felt252 = owner_id.into();
+        core::poseidon::poseidon_hash_span(array![id_felt].span())
+    }
+
+    fn _payload_rotate_owner(owner_id: u32, new_pubkey_hash: felt252) -> felt252 {
+        let id_felt: felt252 = owner_id.into();
+        core::poseidon::poseidon_hash_span(array![id_felt, new_pubkey_hash].span())
+    }
+
+    fn _payload_set_threshold(new: u8) -> felt252 {
+        let new_felt: felt252 = new.into();
+        core::poseidon::poseidon_hash_span(array![new_felt].span())
+    }
+
+    fn _payload_add_verifier(kind: felt252, class_hash: ClassHash) -> felt252 {
+        core::poseidon::poseidon_hash_span(array![kind, class_hash.into()].span())
+    }
+
+    fn _payload_remove_verifier(kind: felt252) -> felt252 {
+        core::poseidon::poseidon_hash_span(array![kind].span())
+    }
+
+    // -----------------------------------------------------------------
+    // Propose entrypoints (caller == self).
+    // Each returns the generated op_id so the OE caller / frontend can
+    // watch for its OpProposed event and schedule execute/cancel.
+    // -----------------------------------------------------------------
+
     #[external(v0)]
-    fn add_owner(
+    fn propose_add_owner(
         ref self: ContractState,
+        proposer: u32,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> felt252 {
+        _assert_self_call();
+        let commitment = crate::signer::interface::owner_commitment(kind, pubkey_bytes.span());
+        let payload = _payload_add_owner(kind, commitment, role, weight, label);
+        self
+            .governance
+            .propose(OP_ADD_OWNER, proposer, payload, TIMELOCK_ADD_OWNER, DEFAULT_OP_EXPIRY_SECONDS)
+    }
+
+    #[external(v0)]
+    fn propose_remove_owner(ref self: ContractState, proposer: u32, owner_id: u32) -> felt252 {
+        _assert_self_call();
+        let payload = _payload_remove_owner(owner_id);
+        self
+            .governance
+            .propose(
+                OP_REMOVE_OWNER,
+                proposer,
+                payload,
+                TIMELOCK_REMOVE_OWNER,
+                DEFAULT_OP_EXPIRY_SECONDS,
+            )
+    }
+
+    #[external(v0)]
+    fn propose_rotate_owner(
+        ref self: ContractState, proposer: u32, owner_id: u32, new_pubkey_bytes: Array<felt252>,
+    ) -> felt252 {
+        _assert_self_call();
+        let owner = self.owners.get_owner(owner_id);
+        let new_hash = crate::signer::interface::owner_commitment(
+            owner.kind, new_pubkey_bytes.span(),
+        );
+        let payload = _payload_rotate_owner(owner_id, new_hash);
+        self
+            .governance
+            .propose(
+                OP_ROTATE_OWNER,
+                proposer,
+                payload,
+                TIMELOCK_ROTATE_OWNER,
+                DEFAULT_OP_EXPIRY_SECONDS,
+            )
+    }
+
+    #[external(v0)]
+    fn propose_set_threshold(ref self: ContractState, proposer: u32, new: u8) -> felt252 {
+        _assert_self_call();
+        let payload = _payload_set_threshold(new);
+        self
+            .governance
+            .propose(
+                OP_SET_THRESHOLD,
+                proposer,
+                payload,
+                TIMELOCK_SET_THRESHOLD,
+                DEFAULT_OP_EXPIRY_SECONDS,
+            )
+    }
+
+    #[external(v0)]
+    fn propose_add_verifier_class(
+        ref self: ContractState, proposer: u32, kind: felt252, class_hash: ClassHash,
+    ) -> felt252 {
+        _assert_self_call();
+        assert(
+            Into::<ClassHash, felt252>::into(self.verifier_classes.read(kind)) == 0,
+            'SHHH: verifier already set',
+        );
+        let payload = _payload_add_verifier(kind, class_hash);
+        self
+            .governance
+            .propose(
+                OP_ADD_VERIFIER_CLASS,
+                proposer,
+                payload,
+                TIMELOCK_ADD_VERIFIER,
+                DEFAULT_OP_EXPIRY_SECONDS,
+            )
+    }
+
+    #[external(v0)]
+    fn propose_remove_verifier_class(
+        ref self: ContractState, proposer: u32, kind: felt252,
+    ) -> felt252 {
+        _assert_self_call();
+        assert(kind != self.primary_kind.read(), 'SHHH: cant remove primary kind');
+        let payload = _payload_remove_verifier(kind);
+        self
+            .governance
+            .propose(
+                OP_REMOVE_VERIFIER_CLASS,
+                proposer,
+                payload,
+                TIMELOCK_REMOVE_VERIFIER,
+                DEFAULT_OP_EXPIRY_SECONDS,
+            )
+    }
+
+    // -----------------------------------------------------------------
+    // Execute entrypoints (permissionless, post-timelock).
+    // Caller re-provides the op arguments. The account recomputes the
+    // payload hash and asserts it matches the stored commitment; then
+    // runs the side effect and marks the op executed.
+    // -----------------------------------------------------------------
+
+    #[external(v0)]
+    fn execute_add_owner(
+        ref self: ContractState,
+        op_id: felt252,
         kind: felt252,
         pubkey_bytes: Array<felt252>,
         role: felt252,
         weight: u8,
         label: felt252,
     ) -> u32 {
-        _assert_self_call();
         let pubkey_span = pubkey_bytes.span();
         let commitment = crate::signer::interface::owner_commitment(kind, pubkey_span);
-        self.owners.add_owner(kind, commitment, pubkey_span, role, weight, label)
+        let expected = _payload_add_owner(kind, commitment, role, weight, label);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_ADD_OWNER, 'OP: wrong op_kind');
+        let new_id = self.owners.add_owner(kind, commitment, pubkey_span, role, weight, label);
+        self.governance.mark_executed(op_id);
+        new_id
     }
 
     #[external(v0)]
-    fn remove_owner(ref self: ContractState, owner_id: u32) {
-        _assert_self_call();
+    fn execute_remove_owner(ref self: ContractState, op_id: felt252, owner_id: u32) {
+        let expected = _payload_remove_owner(owner_id);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_REMOVE_OWNER, 'OP: wrong op_kind');
         self.owners.remove_owner(owner_id);
+        self.governance.mark_executed(op_id);
     }
 
     #[external(v0)]
-    fn rotate_owner_pubkey(
-        ref self: ContractState, owner_id: u32, new_pubkey_bytes: Array<felt252>,
+    fn execute_rotate_owner(
+        ref self: ContractState, op_id: felt252, owner_id: u32, new_pubkey_bytes: Array<felt252>,
     ) {
-        _assert_self_call();
         let owner = self.owners.get_owner(owner_id);
         let new_span = new_pubkey_bytes.span();
         let new_hash = crate::signer::interface::owner_commitment(owner.kind, new_span);
+        let expected = _payload_rotate_owner(owner_id, new_hash);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_ROTATE_OWNER, 'OP: wrong op_kind');
         self.owners.rotate_owner_pubkey(owner_id, new_hash, new_span);
+        self.governance.mark_executed(op_id);
     }
 
     #[external(v0)]
-    fn set_threshold(ref self: ContractState, new: u8) {
-        _assert_self_call();
+    fn execute_set_threshold(ref self: ContractState, op_id: felt252, new: u8) {
+        let expected = _payload_set_threshold(new);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_SET_THRESHOLD, 'OP: wrong op_kind');
         self.owners.set_threshold(new);
+        self.governance.mark_executed(op_id);
     }
 
     #[external(v0)]
-    fn add_verifier_class(ref self: ContractState, kind: felt252, class_hash: ClassHash) {
-        _assert_self_call();
-        let prev = self.verifier_classes.read(kind);
-        assert(Into::<ClassHash, felt252>::into(prev) == 0, 'SHHH: verifier already set');
+    fn execute_add_verifier_class(
+        ref self: ContractState, op_id: felt252, kind: felt252, class_hash: ClassHash,
+    ) {
+        let expected = _payload_add_verifier(kind, class_hash);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_ADD_VERIFIER_CLASS, 'OP: wrong op_kind');
+        // Re-check the not-already-set invariant at execute time in case a
+        // concurrent op slotted a verifier in between propose and execute.
+        assert(
+            Into::<ClassHash, felt252>::into(self.verifier_classes.read(kind)) == 0,
+            'SHHH: verifier already set',
+        );
         self.verifier_classes.write(kind, class_hash);
+        self.governance.mark_executed(op_id);
         self.emit(VerifierClassAdded { kind, class_hash });
     }
 
     #[external(v0)]
-    fn remove_verifier_class(ref self: ContractState, kind: felt252) {
-        _assert_self_call();
+    fn execute_remove_verifier_class(ref self: ContractState, op_id: felt252, kind: felt252) {
+        let expected = _payload_remove_verifier(kind);
+        let op = self.governance.assert_ready(op_id, expected);
+        assert(op.op_kind == OP_REMOVE_VERIFIER_CLASS, 'OP: wrong op_kind');
         assert(kind != self.primary_kind.read(), 'SHHH: cant remove primary kind');
         self.verifier_classes.write(kind, 0.try_into().unwrap());
+        self.governance.mark_executed(op_id);
         self.emit(VerifierClassRemoved { kind });
+    }
+
+    // -----------------------------------------------------------------
+    // Cancel — caller==self, valid any time until the op is executed.
+    // -----------------------------------------------------------------
+
+    #[external(v0)]
+    fn cancel_pending_op(ref self: ContractState, op_id: felt252) {
+        _assert_self_call();
+        self.governance.cancel(op_id);
+    }
+
+    #[external(v0)]
+    fn get_pending_op(self: @ContractState, op_id: felt252) -> PendingOp {
+        self.governance.get_op(op_id)
     }
 
     // ------------------------------------------------------------------
