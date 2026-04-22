@@ -37,14 +37,15 @@ pub mod ShhhAccount {
     use crate::governance::pending_ops::{
         DEFAULT_OP_EXPIRY_SECONDS, OP_ADD_OWNER, OP_ADD_VERIFIER_CLASS, OP_REMOVE_OWNER,
         OP_REMOVE_VERIFIER_CLASS, OP_ROTATE_OWNER, OP_SET_THRESHOLD, PendingOp, TIMELOCK_ADD_OWNER,
-        TIMELOCK_ADD_VERIFIER, TIMELOCK_REMOVE_OWNER, TIMELOCK_REMOVE_VERIFIER,
+        TIMELOCK_ADD_VERIFIER, TIMELOCK_RECOVERY, TIMELOCK_REMOVE_OWNER, TIMELOCK_REMOVE_VERIFIER,
         TIMELOCK_ROTATE_OWNER, TIMELOCK_SET_THRESHOLD,
     };
     use crate::outside_execution::{
         ISRC9_V2, ISRC9_V2_ID, OutsideExecution, SIG_VERSION_V2_SNIP12, compute_snip12_hash,
     };
     use crate::owner_set::component::OwnerSetComponent;
-    use crate::owner_set::interface::OwnerRecord;
+    use crate::owner_set::interface::{OwnerRecord, ROLE_GUARDIAN, ROLE_OWNER};
+    use crate::recovery::component::RecoveryComponent;
     use crate::signer::interface::{ISignerDispatcherTrait, ISignerLibraryDispatcher};
 
     // ------------------------------------------------------------------
@@ -61,12 +62,14 @@ pub mod ShhhAccount {
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
     component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
+    component!(path: RecoveryComponent, storage: recovery, event: RecoveryEvent);
 
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
     impl SRC5InternalImpl = SRC5Component::InternalImpl<ContractState>;
     impl OwnerSetInternal = OwnerSetComponent::InternalImpl<ContractState>;
     impl GovernanceInternal = GovernanceComponent::InternalImpl<ContractState>;
+    impl RecoveryInternal = RecoveryComponent::InternalImpl<ContractState>;
 
     #[storage]
     struct Storage {
@@ -87,6 +90,11 @@ pub mod ShhhAccount {
         owners: OwnerSetComponent::Storage,
         #[substorage(v0)]
         governance: GovernanceComponent::Storage,
+        // `recovery.pending` and `governance.pending` namespaced under
+        // their own substorage prefixes — physically distinct slots.
+        #[allow(starknet::colliding_storage_paths)]
+        #[substorage(v0)]
+        recovery: RecoveryComponent::Storage,
     }
 
     #[event]
@@ -98,6 +106,8 @@ pub mod ShhhAccount {
         OwnerSetEvent: OwnerSetComponent::Event,
         #[flat]
         GovernanceEvent: GovernanceComponent::Event,
+        #[flat]
+        RecoveryEvent: RecoveryComponent::Event,
         PrimaryOwnerInitialized: PrimaryOwnerInitialized,
         VerifierClassAdded: VerifierClassAdded,
         VerifierClassRemoved: VerifierClassRemoved,
@@ -576,6 +586,93 @@ pub mod ShhhAccount {
     #[external(v0)]
     fn get_pending_op(self: @ContractState, op_id: felt252) -> PendingOp {
         self.governance.get_op(op_id)
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 6 — guardian-initiated recovery.
+    //
+    // Recovery flow:
+    //   1. `initiate_recovery` — self-call; proposer MUST have role=GUARDIAN.
+    //      Stores the new-owner commitment with a 7-day timelock.
+    //   2. `cancel_recovery` — self-call, any ROLE_OWNER. Clears the pending
+    //      state instantly. Recommended to wire into an auto-watcher.
+    //   3. `finalize_recovery` — PERMISSIONLESS after the timelock elapses.
+    //      Caller re-provides the full new-owner args; we recompute the
+    //      commitment and assert equality before adding to the owner set.
+    //
+    // Recovery is ADDITIVE: existing owners stay. The user is expected
+    // to follow up with `remove_owner` governance proposals for the
+    // devices they actually lost.
+    // ------------------------------------------------------------------
+
+    fn _recovery_new_owner_commitment(
+        kind: felt252, pubkey_hash: felt252, role: felt252, weight: u8, label: felt252,
+    ) -> felt252 {
+        // Reuses the payload_add_owner shape — a recovery is, structurally,
+        // an `add_owner` with a longer timelock and a guardian-authored proposal.
+        _payload_add_owner(kind, pubkey_hash, role, weight, label)
+    }
+
+    #[external(v0)]
+    fn initiate_recovery(
+        ref self: ContractState,
+        proposer: u32,
+        new_owner_kind: felt252,
+        new_pubkey_bytes: Array<felt252>,
+        new_role: felt252,
+        new_weight: u8,
+        new_label: felt252,
+    ) {
+        _assert_self_call();
+        let proposer_record = self.owners.get_owner(proposer);
+        assert(!proposer_record.revoked, 'RECOVERY: proposer revoked');
+        assert(proposer_record.role == ROLE_GUARDIAN, 'RECOVERY: not a guardian');
+
+        let pubkey_hash = crate::signer::interface::owner_commitment(
+            new_owner_kind, new_pubkey_bytes.span(),
+        );
+        let commitment = _recovery_new_owner_commitment(
+            new_owner_kind, pubkey_hash, new_role, new_weight, new_label,
+        );
+        self.recovery.initiate(commitment, TIMELOCK_RECOVERY);
+    }
+
+    #[external(v0)]
+    fn cancel_recovery(ref self: ContractState, owner_id: u32) {
+        _assert_self_call();
+        let owner = self.owners.get_owner(owner_id);
+        assert(!owner.revoked, 'RECOVERY: canceler revoked');
+        assert(owner.role == ROLE_OWNER, 'RECOVERY: not an owner');
+        self.recovery.cancel();
+    }
+
+    #[external(v0)]
+    fn finalize_recovery(
+        ref self: ContractState,
+        new_owner_kind: felt252,
+        new_pubkey_bytes: Array<felt252>,
+        new_role: felt252,
+        new_weight: u8,
+        new_label: felt252,
+    ) -> u32 {
+        // Permissionless — the 7-day window is the security property.
+        let pubkey_span = new_pubkey_bytes.span();
+        let pubkey_hash = crate::signer::interface::owner_commitment(new_owner_kind, pubkey_span);
+        let expected = _recovery_new_owner_commitment(
+            new_owner_kind, pubkey_hash, new_role, new_weight, new_label,
+        );
+        let stored = self.recovery.finalize();
+        assert(stored == expected, 'RECOVERY: args mismatch');
+        self
+            .owners
+            .add_owner(new_owner_kind, pubkey_hash, pubkey_span, new_role, new_weight, new_label)
+    }
+
+    #[external(v0)]
+    fn get_pending_recovery(
+        self: @ContractState,
+    ) -> crate::recovery::component::RecoveryComponent::PendingRecovery {
+        self.recovery.read_pending()
     }
 
     // ------------------------------------------------------------------

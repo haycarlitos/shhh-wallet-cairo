@@ -9,7 +9,7 @@
 #[starknet::component]
 pub mod RecoveryComponent {
     use starknet::get_block_timestamp;
-    use starknet::storage::{StorageMapReadAccess, StorageMapWriteAccess};
+    use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 
     // ------------------------------------------------------------------
     // Pending recovery record

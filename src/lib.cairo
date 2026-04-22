@@ -47,6 +47,11 @@ pub mod governance {
     pub mod pending_ops;
 }
 
+// ----- Guardian recovery (Phase 6) -----
+pub mod recovery {
+    pub mod component;
+}
+
 // ----- V8 account (Phase 3 dispatcher + Phase 4 multi-owner) -----
 pub mod account;
 
