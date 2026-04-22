@@ -1,8 +1,7 @@
 //! Owner-set interface. An OwnerRecord identifies one authorized signer
 //! on the account. The set is mutable via threshold-authorized governance
-//! operations (see `governance/pending_ops.cairo`).
-
-use starknet::storage_access::StorageBaseAddress;
+//! operations (see `governance/pending_ops.cairo`). Phase 4 gates every
+//! mutator with `caller == self`; timelocked governance lands in Phase 5.
 
 // ------------------------------------------------------------------
 // Roles

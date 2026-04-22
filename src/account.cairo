@@ -1,23 +1,28 @@
-//! ShhhAccount — V8 account class, Phase 3 scope.
+//! ShhhAccount — V8 account class, Phases 3 + 4 scope.
 //!
-//! Single primary owner + pluggable verifier via `library_call_syscall`.
-//! Multi-owner / governance / recovery / session-keys land in Phases 4–7
-//! and augment (not replace) the storage layout below.
+//! - Phase 3: single-entry dispatcher + pluggable verifier via
+//!   `library_call_syscall`.
+//! - Phase 4: multi-owner storage (up to N owners with weight + role),
+//!   self-gated `add_owner` / `remove_owner` / `rotate_owner_pubkey` /
+//!   `set_threshold`. Deterministic address derivation via
+//!   `salt = poseidon(primary_kind, primary_pubkey_hash)` is computed
+//!   off-chain (see `scripts/ts/compute-wallet-address.ts`).
 //!
-//! Every audit finding from 2026-04-20 is enforced in-contract, with the
-//! same error prefixes (`C1:`, `H1:`, `M1:`..`M4:`, `L1:`, etc.) as the
-//! V7 in-place patch on `src/wallet.cairo`. Phase 3 tests confirm each
-//! guard fires.
+//! Governance timelocks (Phase 5) and recovery (Phase 6) will replace
+//! the `caller == self` gate on mutators. Sessions (Phase 7), secp256k1
+//! (Phase 8), and WebAuthn (Phase 9) bolt on without storage changes.
 //!
-//! Deployment calldata:
-//!   [ primary_kind,                          // felt252 short-string
-//!     primary_verifier_class_hash,           // ClassHash
-//!     pubkey_len, pubkey_0, ..., pubkey_n,   // Span<felt252>
-//!     label ]                                // felt252 user tag
+//! Every audit finding (2026-04-20) has its guard inline with its
+//! audit-id error prefix (`C1:`, `M1:`..). See tests/audit_2026_04_20.cairo.
+//!
+//! Events-for-indexer rule: every state change emits an event with
+//! enough data for an indexer to reconstruct the new state without
+//! re-reading storage.
 
 #[starknet::contract(account)]
 pub mod ShhhAccount {
     use core::num::traits::Zero;
+    use core::poseidon::poseidon_hash_span;
     use openzeppelin::introspection::src5::SRC5Component;
     use starknet::account::Call;
     use starknet::storage::{
@@ -31,6 +36,8 @@ pub mod ShhhAccount {
     use crate::outside_execution::{
         ISRC9_V2, ISRC9_V2_ID, OutsideExecution, SIG_VERSION_V2_SNIP12, compute_snip12_hash,
     };
+    use crate::owner_set::component::OwnerSetComponent;
+    use crate::owner_set::interface::OwnerRecord;
     use crate::signer::interface::{ISignerDispatcherTrait, ISignerLibraryDispatcher};
 
     // ------------------------------------------------------------------
@@ -45,30 +52,30 @@ pub mod ShhhAccount {
     pub const OE_OWNER_ENVELOPE_HEADER_LEN: u32 = 3;
 
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
+    component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
 
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
     impl SRC5InternalImpl = SRC5Component::InternalImpl<ContractState>;
+    impl OwnerSetInternal = OwnerSetComponent::InternalImpl<ContractState>;
 
     #[storage]
     struct Storage {
-        // Primary owner, frozen at deploy.
+        // Primary-owner binding (frozen at deploy). Used by address salt
+        // and by paymasters deciding signer routing.
         primary_kind: felt252,
         primary_pubkey_hash: felt252,
-        // Append-only pubkey bytes log (only one entry today; multi-owner
-        // Phase 4 adds more).
-        primary_pubkey_len: u32,
-        primary_pubkey_slot: u64,
-        pubkey_bytes: Map<u64, felt252>,
-        pubkey_cursor: u64,
+        address_salt: felt252,
         // Kind → verifier class hash. Mutating this is restricted to
         // `caller == self` until Phase 5 wires timelocked governance.
         verifier_classes: Map<felt252, ClassHash>,
         // SRC9 nonces.
         oe_nonces: Map<felt252, bool>,
-        // SRC5.
+        // Components.
         #[substorage(v0)]
         src5: SRC5Component::Storage,
+        #[substorage(v0)]
+        owners: OwnerSetComponent::Storage,
     }
 
     #[event]
@@ -76,7 +83,25 @@ pub mod ShhhAccount {
     enum Event {
         #[flat]
         SRC5Event: SRC5Component::Event,
+        #[flat]
+        OwnerSetEvent: OwnerSetComponent::Event,
+        PrimaryOwnerInitialized: PrimaryOwnerInitialized,
         VerifierClassAdded: VerifierClassAdded,
+        VerifierClassRemoved: VerifierClassRemoved,
+        OutsideExecutionExecuted: OutsideExecutionExecuted,
+    }
+
+    /// Fired once in the constructor. Carries the primary owner's salt
+    /// inputs so an indexer can precompute / reconcile the deterministic
+    /// address without reading storage.
+    #[derive(Drop, starknet::Event)]
+    struct PrimaryOwnerInitialized {
+        #[key]
+        kind: felt252,
+        #[key]
+        pubkey_hash: felt252,
+        verifier_class: ClassHash,
+        salt: felt252,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -86,13 +111,27 @@ pub mod ShhhAccount {
         class_hash: ClassHash,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct VerifierClassRemoved {
+        #[key]
+        kind: felt252,
+    }
+
+    /// Emitted after a successful `execute_from_outside_v2`. Enough data
+    /// for an indexer to match the tx to a known OE and link the signer.
+    #[derive(Drop, starknet::Event)]
+    struct OutsideExecutionExecuted {
+        #[key]
+        owner_id: u32,
+        #[key]
+        nonce: felt252,
+        kind: felt252,
+        message_hash: felt252,
+        calls_count: u32,
+    }
+
     // ------------------------------------------------------------------
     // Constructor
-    //
-    // Audit L-1: we delegate public-key range checks to the verifier
-    // class itself (via a probe call that will fire in Phase 4 when
-    // `validate_pubkey` is added to the ISigner trait). Until then we
-    // require a non-zero commitment and a non-empty pubkey span.
     // ------------------------------------------------------------------
 
     #[constructor]
@@ -103,30 +142,41 @@ pub mod ShhhAccount {
         pubkey: Span<felt252>,
         label: felt252,
     ) {
-        let _ = label; // labels are a Phase 4 owner-set feature
         assert(primary_kind != 0, 'L1: primary_kind is zero');
         assert(pubkey.len() > 0_u32, 'L1: pubkey empty');
         let verifier_felt: felt252 = primary_verifier.into();
         assert(verifier_felt != 0, 'L1: verifier class zero');
 
-        // Store pubkey bytes and commitment.
-        let slot = _append_pubkey_bytes(ref self, pubkey);
         let commitment = crate::signer::interface::owner_commitment(primary_kind, pubkey);
-
         self.primary_kind.write(primary_kind);
         self.primary_pubkey_hash.write(commitment);
-        self.primary_pubkey_len.write(pubkey.len());
-        self.primary_pubkey_slot.write(slot);
+        let salt = poseidon_hash_span(array![primary_kind, commitment].span());
+        self.address_salt.write(salt);
+
+        // Store primary owner at owner_id 0 via the component.
+        self.owners.initialize_primary(primary_kind, commitment, pubkey, label);
+
+        // Register verifier class for the primary kind.
         self.verifier_classes.write(primary_kind, primary_verifier);
 
-        // Register the canonical SRC9 V2 interface (audit H-2).
+        // SRC5: canonical SNIP-9 V2 interface (audit H-2).
         self.src5.register_interface(ISRC9_V2_ID);
 
+        // Events (indexer rule: emit full state for the primary owner).
+        self
+            .emit(
+                PrimaryOwnerInitialized {
+                    kind: primary_kind,
+                    pubkey_hash: commitment,
+                    verifier_class: primary_verifier,
+                    salt,
+                },
+            );
         self.emit(VerifierClassAdded { kind: primary_kind, class_hash: primary_verifier });
     }
 
     // ------------------------------------------------------------------
-    // __validate__ — always reverts.
+    // __validate__ always reverts. __validate_deploy__ omitted.
     // ------------------------------------------------------------------
 
     #[external(v0)]
@@ -138,11 +188,6 @@ pub mod ShhhAccount {
     fn __validate_declare__(self: @ContractState, _class_hash: felt252) -> felt252 {
         core::panic_with_felt252('SHHH: declare disabled')
     }
-
-    // __validate_deploy__ is intentionally omitted — deploys are sponsored
-    // by the paymaster (which performs its own sanity checks) and the
-    // deterministic address binds primary_kind + pubkey_hash into the
-    // salt. No on-chain deploy-time signature is required.
 
     // ------------------------------------------------------------------
     // __execute__ — protocol/paymaster path. Audit C-1 gated.
@@ -170,7 +215,6 @@ pub mod ShhhAccount {
             // 1. Caller check (M-1).
             let caller_felt: felt252 = outside_execution.caller.into();
             if caller_felt == 'ANY_CALLER' {
-                // 2a. Window cap on bearer payloads (M-2).
                 let window = outside_execution.execute_before - outside_execution.execute_after;
                 assert(window <= MAX_ANY_CALLER_VALIDITY_SECONDS, 'M2: window too long');
             } else {
@@ -178,59 +222,67 @@ pub mod ShhhAccount {
                 assert(get_caller_address() == outside_execution.caller, 'SRC9: invalid caller');
             }
 
-            // 2b. Time bounds.
+            // 2. Time bounds.
             let now = get_block_timestamp();
             assert(outside_execution.execute_after < now, 'SRC9: too early');
             assert(now < outside_execution.execute_before, 'SRC9: too late');
 
-            // 3. Nonce replay check.
+            // 3. Nonce replay.
             assert(!self.oe_nonces.read(outside_execution.nonce), 'SRC9: duplicate nonce');
             self.oe_nonces.write(outside_execution.nonce, true);
 
-            // 4. Bounds (M-3). Computed before any hashing or library_call.
-            assert(outside_execution.calls.len() <= MAX_CALLS, 'M3: too many calls');
+            // 4. Bounds (M-3).
+            let calls_count = outside_execution.calls.len();
+            assert(calls_count <= MAX_CALLS, 'M3: too many calls');
             assert(
                 _total_calldata_felts(outside_execution.calls) <= MAX_TOTAL_CALLDATA_FELTS,
                 'M3: calldata too large',
             );
             assert(signature.len() <= MAX_SIGNATURE_FELTS, 'M3: signature too long');
 
-            // 5. Owner envelope header. Phase 3 only supports the V2 SNIP-12
-            //    hashing path; legacy V1_HEX_ASCII route stays in
-            //    `wallet.cairo` (the V7 in-place patch) during the
-            //    deprecation window.
+            // 5. Owner-envelope header.
             assert(signature.len() >= OE_OWNER_ENVELOPE_HEADER_LEN, 'SRC9: sig too short');
             let version_tag = *signature.at(0);
             assert(version_tag == SIG_VERSION_V2_SNIP12, 'SHHH: unsupported sig version');
 
             let owner_id: u32 = (*signature.at(1)).try_into().expect('SHHH: bad owner_id');
-            assert(owner_id == 0_u32, 'SHHH: unknown owner_id');
+            assert(owner_id < self.owners.owner_count(), 'SHHH: unknown owner_id');
+            let owner: OwnerRecord = self.owners.get_owner(owner_id);
+            assert(!owner.revoked, 'SHHH: owner revoked');
 
             let kind_tag = *signature.at(2);
-            let primary_kind = self.primary_kind.read();
-            assert(kind_tag == primary_kind, 'SHHH: kind mismatch');
+            assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
 
-            // 6. Compute SNIP-12 hash and dispatch to the verifier class.
+            // 6. SNIP-12 hash + library_call dispatch.
             let chain_id = get_tx_info().unbox().chain_id;
             let message_hash = compute_snip12_hash(
                 @outside_execution, get_contract_address(), chain_id,
             );
-            let verifier_class = self.verifier_classes.read(primary_kind);
+            let verifier_class = self.verifier_classes.read(owner.kind);
             assert(Into::<ClassHash, felt252>::into(verifier_class) != 0, 'SHHH: verifier missing');
 
-            // Load primary pubkey span out of storage.
-            let pubkey = _read_primary_pubkey(@self);
-
-            // `library_call` invokes the verifier in the account's own
-            // execution context. The verifier is a pure function —
-            // cannot mutate account storage.
+            let pubkey = self.owners.read_pubkey_bytes(owner);
             let verifier_payload = _slice_from(signature, OE_OWNER_ENVELOPE_HEADER_LEN);
             let dispatcher = ISignerLibraryDispatcher { class_hash: verifier_class };
             let ok = dispatcher.verify(message_hash, pubkey.span(), verifier_payload);
             assert(ok, 'SHHH: signature invalid');
 
             // 7. Atomic multicall (H-1).
-            _execute_calls_atomic_span(outside_execution.calls)
+            let results = _execute_calls_atomic_span(outside_execution.calls);
+
+            // 8. Indexer event — full identifying info.
+            self
+                .emit(
+                    OutsideExecutionExecuted {
+                        owner_id,
+                        nonce: outside_execution.nonce,
+                        kind: owner.kind,
+                        message_hash,
+                        calls_count,
+                    },
+                );
+
+            results
         }
 
         fn is_valid_outside_execution_nonce(self: @ContractState, nonce: felt252) -> bool {
@@ -239,7 +291,70 @@ pub mod ShhhAccount {
     }
 
     // ------------------------------------------------------------------
-    // Introspection
+    // Owner-set mutators (self-gated; timelocks arrive in Phase 5).
+    //
+    // These are callable only by the account itself — i.e. as a sub-call
+    // of a verified `execute_from_outside_v2` or a protocol-invoked
+    // `__execute__`. They never take an owner-visible signature directly.
+    // ------------------------------------------------------------------
+
+    #[external(v0)]
+    fn add_owner(
+        ref self: ContractState,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> u32 {
+        _assert_self_call();
+        let pubkey_span = pubkey_bytes.span();
+        let commitment = crate::signer::interface::owner_commitment(kind, pubkey_span);
+        self.owners.add_owner(kind, commitment, pubkey_span, role, weight, label)
+    }
+
+    #[external(v0)]
+    fn remove_owner(ref self: ContractState, owner_id: u32) {
+        _assert_self_call();
+        self.owners.remove_owner(owner_id);
+    }
+
+    #[external(v0)]
+    fn rotate_owner_pubkey(
+        ref self: ContractState, owner_id: u32, new_pubkey_bytes: Array<felt252>,
+    ) {
+        _assert_self_call();
+        let owner = self.owners.get_owner(owner_id);
+        let new_span = new_pubkey_bytes.span();
+        let new_hash = crate::signer::interface::owner_commitment(owner.kind, new_span);
+        self.owners.rotate_owner_pubkey(owner_id, new_hash, new_span);
+    }
+
+    #[external(v0)]
+    fn set_threshold(ref self: ContractState, new: u8) {
+        _assert_self_call();
+        self.owners.set_threshold(new);
+    }
+
+    #[external(v0)]
+    fn add_verifier_class(ref self: ContractState, kind: felt252, class_hash: ClassHash) {
+        _assert_self_call();
+        let prev = self.verifier_classes.read(kind);
+        assert(Into::<ClassHash, felt252>::into(prev) == 0, 'SHHH: verifier already set');
+        self.verifier_classes.write(kind, class_hash);
+        self.emit(VerifierClassAdded { kind, class_hash });
+    }
+
+    #[external(v0)]
+    fn remove_verifier_class(ref self: ContractState, kind: felt252) {
+        _assert_self_call();
+        assert(kind != self.primary_kind.read(), 'SHHH: cant remove primary kind');
+        self.verifier_classes.write(kind, 0.try_into().unwrap());
+        self.emit(VerifierClassRemoved { kind });
+    }
+
+    // ------------------------------------------------------------------
+    // Read-only introspection
     // ------------------------------------------------------------------
 
     #[external(v0)]
@@ -253,37 +368,46 @@ pub mod ShhhAccount {
     }
 
     #[external(v0)]
+    fn address_salt(self: @ContractState) -> felt252 {
+        self.address_salt.read()
+    }
+
+    #[external(v0)]
     fn get_verifier_class(self: @ContractState, kind: felt252) -> ClassHash {
         self.verifier_classes.read(kind)
+    }
+
+    #[external(v0)]
+    fn get_owner(self: @ContractState, owner_id: u32) -> OwnerRecord {
+        self.owners.get_owner(owner_id)
+    }
+
+    #[external(v0)]
+    fn owner_count(self: @ContractState) -> u32 {
+        self.owners.owner_count()
+    }
+
+    #[external(v0)]
+    fn active_owner_count(self: @ContractState) -> u32 {
+        self.owners.active_owner_count()
+    }
+
+    #[external(v0)]
+    fn threshold(self: @ContractState) -> u8 {
+        self.owners.threshold_value()
+    }
+
+    #[external(v0)]
+    fn total_weight(self: @ContractState) -> u32 {
+        self.owners.total_weight()
     }
 
     // ------------------------------------------------------------------
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn _append_pubkey_bytes(ref self: ContractState, bytes: Span<felt252>) -> u64 {
-        let start = self.pubkey_cursor.read();
-        let mut i: u32 = 0;
-        while i < bytes.len() {
-            let slot: u64 = start + i.into();
-            self.pubkey_bytes.write(slot, *bytes.at(i));
-            i += 1;
-        }
-        self.pubkey_cursor.write(start + bytes.len().into());
-        start
-    }
-
-    fn _read_primary_pubkey(self: @ContractState) -> Array<felt252> {
-        let len = self.primary_pubkey_len.read();
-        let slot = self.primary_pubkey_slot.read();
-        let mut out: Array<felt252> = array![];
-        let mut i: u32 = 0;
-        while i < len {
-            let s: u64 = slot + i.into();
-            out.append(self.pubkey_bytes.read(s));
-            i += 1;
-        }
-        out
+    fn _assert_self_call() {
+        assert(get_caller_address() == get_contract_address(), 'SHHH: caller != self');
     }
 
     fn _slice_from(span: Span<felt252>, start: u32) -> Span<felt252> {

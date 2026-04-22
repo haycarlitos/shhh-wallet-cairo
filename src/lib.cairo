@@ -35,7 +35,13 @@ pub mod signer {
     }
 }
 
-// ----- V8 account (Phase 3 — single-owner dispatcher) -----
+// ----- Multi-owner storage (Phase 4) -----
+pub mod owner_set {
+    pub mod component;
+    pub mod interface;
+}
+
+// ----- V8 account (Phase 3 dispatcher + Phase 4 multi-owner) -----
 pub mod account;
 
 // ----- Test helpers (declared so snforge can deploy them) -----
