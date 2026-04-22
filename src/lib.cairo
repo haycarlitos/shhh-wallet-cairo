@@ -34,3 +34,11 @@ pub mod signer {
         pub mod verifier;
     }
 }
+
+// ----- V8 account (Phase 3 — single-owner dispatcher) -----
+pub mod account;
+
+// ----- Test helpers (declared so snforge can deploy them) -----
+pub mod test_helpers {
+    pub mod target;
+}
