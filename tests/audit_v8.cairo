@@ -113,6 +113,73 @@ fn test_v8_m3_signature_too_long() {
     src9.execute_from_outside_v2(oe, sig.span());
 }
 // ============================================================
+// Timelock boundary — execution at EXACTLY `valid_after` must succeed.
+// Kills the `>=` → `>` off-by-one mutant.
+// ============================================================
+
+#[starknet::interface]
+trait IShhhGov<TContractState> {
+    fn propose_set_threshold(ref self: TContractState, proposer: u32, new: u8) -> felt252;
+    fn execute_set_threshold(ref self: TContractState, op_id: felt252, new: u8);
+}
+
+const TIMELOCK_SET_THRESHOLD: u64 = 172_800; // 48h — mirrors pending_ops.cairo
+
+#[test]
+#[should_panic(expected: 'OWNERS: threshold == 0')]
+fn test_v8_timelock_boundary_accepts_at_valid_after() {
+    // The op's valid_after = propose_ts + TIMELOCK. Advancing to
+    // EXACTLY that timestamp must let execute() proceed past the
+    // timelock check — it then fails on the threshold==0 invariant
+    // inside OwnerSetComponent::set_threshold, which is what the
+    // should_panic matches. If the mutant flips `>=` to `>`, the
+    // timelock check rejects this timestamp and the panic class
+    // changes → mutant killed.
+    let addr = deploy_account();
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    let propose_ts: u64 = 1_000_000;
+
+    start_cheat_block_timestamp_global(propose_ts);
+    start_cheat_caller_address(addr, addr);
+    let op_id = gov.propose_set_threshold(0_u32, 0_u8);
+
+    // Exactly at valid_after — passes `now >= valid_after`,
+    // fails `now > valid_after`.
+    start_cheat_block_timestamp_global(propose_ts + TIMELOCK_SET_THRESHOLD);
+    gov.execute_set_threshold(op_id, 0_u8);
+}
+
+// ============================================================
+// H-1 atomic multicall — sub-call failure inside a self-invoked
+// multicall (via __execute__) must revert the whole batch with
+// 'H1: subcall failed'. Uses the Target helper's known panicking
+// selector (selector!("noop") is not exported → dispatch fails).
+// ============================================================
+
+#[test]
+#[should_panic(expected: 'H1: subcall failed')]
+fn test_v8_h1_atomic_multicall_propagates_failure() {
+    let addr = deploy_account();
+    // Deploy a real target so dispatch reaches the callee; a bogus
+    // selector there makes the subcall fail. The H-1 guard must
+    // propagate the failure as 'H1: subcall failed'. If the mutant
+    // swallows it, the multicall returns normally and the test fails.
+    let target_class = declare("Target").unwrap().contract_class();
+    let (target, _) = target_class.deploy(@array![]).unwrap();
+    start_cheat_caller_address(addr, addr);
+    let dispatcher = IAccountExecDispatcher { contract_address: addr };
+    dispatcher
+        .__execute__(
+            array![
+                Call {
+                    to: target,
+                    selector: selector!("this_selector_does_not_exist"),
+                    calldata: array![].span(),
+                },
+            ],
+        );
+}
+// ============================================================
 // Nonce replay on V8 — handled by the Phase 11 STARK-signed e2e test.
 //
 // Within a single failing tx the nonce write is rolled back with the
@@ -122,4 +189,5 @@ fn test_v8_m3_signature_too_long() {
 // nonce' on the second is the correct covering test and lands
 // alongside the Phase 11 STARK-session-signed fixture.
 // ============================================================
+
 
