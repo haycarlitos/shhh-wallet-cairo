@@ -180,6 +180,72 @@ fn test_v8_h1_atomic_multicall_propagates_failure() {
         );
 }
 // ============================================================
+// V8 blocklist — session keys can't reach governance / recovery /
+// migration selectors even if the whitelist allows them.
+//
+// Setup:
+//   1. Add a session key with whitelist = [selector("initiate_recovery")]
+//   2. Submit a 4-element session sig OE that calls
+//      self.initiate_recovery(...). is_session_allowed_for_calls
+//      accepts (selector is in whitelist, caller is self-call... but
+//      empty-whitelist self-call block doesn't apply because the
+//      whitelist is non-empty).
+//   3. V8 blocklist (_v8_blocklist_ok) MUST fire with
+//      'SESSION: V8-blocked selector'. If the mutant drops the
+//      initiate_recovery entry, the call slips to the ECDSA verify
+//      stage → different panic class → mutant killed.
+// ============================================================
+
+#[starknet::interface]
+trait IShhhSessions<TContractState> {
+    fn add_or_update_session_key(
+        ref self: TContractState,
+        session_key: felt252,
+        valid_until: u64,
+        max_calls: u32,
+        allowed_entrypoints: Array<felt252>,
+    );
+}
+
+#[test]
+#[should_panic(expected: 'SESSION: V8-blocked selector')]
+fn test_v8_blocklist_rejects_session_initiate_recovery() {
+    let addr = deploy_account();
+    let sessions = IShhhSessionsDispatcher { contract_address: addr };
+    let src9 = ISRC9_V2Dispatcher { contract_address: addr };
+
+    // Add a session key with an explicit whitelist permitting
+    // initiate_recovery — this bypasses the ported SNIPs#163 empty-
+    // whitelist self-call block, forcing the flow to reach the V8
+    // blocklist check next.
+    start_cheat_caller_address(addr, addr);
+    sessions
+        .add_or_update_session_key(
+            0xDEAD, 10_000_u64, 10_u32, array![selector!("initiate_recovery")],
+        );
+
+    // Submit a 4-element session signature. r, s, valid_until are
+    // placeholder — the V8 blocklist fires BEFORE ECDSA verify.
+    start_cheat_block_timestamp_global(500);
+    let oe = OutsideExecution {
+        caller: 'ANY_CALLER'.try_into().unwrap(),
+        nonce: 0x1234,
+        execute_after: 0,
+        execute_before: 1000,
+        calls: array![
+            Call {
+                to: addr, // self-call to initiate_recovery
+                selector: selector!("initiate_recovery"),
+                calldata: array![].span(),
+            },
+        ]
+            .span(),
+    };
+    // [session_pubkey, r, s, valid_until]
+    let sig = array![0xDEAD, 0xAA, 0xBB, 10_000].span();
+    src9.execute_from_outside_v2(oe, sig);
+}
+// ============================================================
 // Nonce replay on V8 — handled by the Phase 11 STARK-signed e2e test.
 //
 // Within a single failing tx the nonce write is rolled back with the
