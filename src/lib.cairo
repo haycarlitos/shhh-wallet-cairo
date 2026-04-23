@@ -52,6 +52,16 @@ pub mod recovery {
     pub mod component;
 }
 
+// ----- Session keys + spending policy (Phase 7, from SNIPs#163) -----
+pub mod session_key {
+    pub mod component;
+    pub mod interface;
+}
+pub mod spending_policy {
+    pub mod component;
+    pub mod interface;
+}
+
 // ----- V8 account (Phase 3 dispatcher + Phase 4 multi-owner) -----
 pub mod account;
 

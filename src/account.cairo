@@ -21,6 +21,7 @@
 
 #[starknet::contract(account)]
 pub mod ShhhAccount {
+    use core::ecdsa::check_ecdsa_signature;
     use core::num::traits::Zero;
     use core::poseidon::poseidon_hash_span;
     use openzeppelin::introspection::src5::SRC5Component;
@@ -30,8 +31,8 @@ pub mod ShhhAccount {
         StoragePointerWriteAccess,
     };
     use starknet::{
-        ClassHash, get_block_timestamp, get_caller_address, get_contract_address, get_tx_info,
-        syscalls,
+        ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
+        get_tx_info, syscalls,
     };
     use crate::governance::component::GovernanceComponent;
     use crate::governance::pending_ops::{
@@ -46,7 +47,11 @@ pub mod ShhhAccount {
     use crate::owner_set::component::OwnerSetComponent;
     use crate::owner_set::interface::{OwnerRecord, ROLE_GUARDIAN, ROLE_OWNER};
     use crate::recovery::component::RecoveryComponent;
+    use crate::session_key::component::SessionKeyComponent;
+    use crate::session_key::interface::SessionData;
     use crate::signer::interface::{ISignerDispatcherTrait, ISignerLibraryDispatcher};
+    use crate::spending_policy::component::SpendingPolicyComponent;
+    use crate::spending_policy::interface::SpendingPolicy;
 
     // ------------------------------------------------------------------
     // Audit-driven bounds (M-2, M-3). Same values as the V7 in-place fix.
@@ -63,6 +68,8 @@ pub mod ShhhAccount {
     component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
     component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
     component!(path: RecoveryComponent, storage: recovery, event: RecoveryEvent);
+    component!(path: SessionKeyComponent, storage: session_key, event: SessionKeyEvent);
+    component!(path: SpendingPolicyComponent, storage: spending_policy, event: SpendingPolicyEvent);
 
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
@@ -70,6 +77,22 @@ pub mod ShhhAccount {
     impl OwnerSetInternal = OwnerSetComponent::InternalImpl<ContractState>;
     impl GovernanceInternal = GovernanceComponent::InternalImpl<ContractState>;
     impl RecoveryInternal = RecoveryComponent::InternalImpl<ContractState>;
+    impl SessionKeyInternal = SessionKeyComponent::InternalImpl<ContractState>;
+    impl SpendingPolicyInternal = SpendingPolicyComponent::InternalImpl<ContractState>;
+
+    // Both components require a `HasAccountOwner` seam — we supply it
+    // by asserting `caller == self`, which is the standard V8 convention
+    // for protected entrypoints.
+    impl SessionKeyHasOwnerImpl of SessionKeyComponent::HasAccountOwner<ContractState> {
+        fn assert_only_self(self: @ContractState) {
+            assert(get_caller_address() == get_contract_address(), 'SHHH: caller != self');
+        }
+    }
+    impl SpendingPolicyHasOwnerImpl of SpendingPolicyComponent::HasAccountOwner<ContractState> {
+        fn assert_only_self(self: @ContractState) {
+            assert(get_caller_address() == get_contract_address(), 'SHHH: caller != self');
+        }
+    }
 
     #[storage]
     struct Storage {
@@ -95,6 +118,10 @@ pub mod ShhhAccount {
         #[allow(starknet::colliding_storage_paths)]
         #[substorage(v0)]
         recovery: RecoveryComponent::Storage,
+        #[substorage(v0)]
+        session_key: SessionKeyComponent::Storage,
+        #[substorage(v0)]
+        spending_policy: SpendingPolicyComponent::Storage,
     }
 
     #[event]
@@ -108,6 +135,10 @@ pub mod ShhhAccount {
         GovernanceEvent: GovernanceComponent::Event,
         #[flat]
         RecoveryEvent: RecoveryComponent::Event,
+        #[flat]
+        SessionKeyEvent: SessionKeyComponent::Event,
+        #[flat]
+        SpendingPolicyEvent: SpendingPolicyComponent::Event,
         PrimaryOwnerInitialized: PrimaryOwnerInitialized,
         VerifierClassAdded: VerifierClassAdded,
         VerifierClassRemoved: VerifierClassRemoved,
@@ -263,7 +294,39 @@ pub mod ShhhAccount {
             );
             assert(signature.len() <= MAX_SIGNATURE_FELTS, 'M3: signature too long');
 
-            // 5. Owner-envelope header.
+            // 5. Route by signature shape (SNIPs#163 convention):
+            //    - 4-element  → session key [session_pubkey, r, s, valid_until]
+            //    - variable   → owner envelope [V2_SNIP12, owner_id, kind, payload...]
+            let chain_id = get_tx_info().unbox().chain_id;
+            let message_hash = compute_snip12_hash(
+                @outside_execution, get_contract_address(), chain_id,
+            );
+
+            if signature.len() == 4_u32 {
+                _verify_session_sig_and_consume(
+                    ref self, outside_execution.calls, signature, message_hash,
+                );
+                let session_pubkey = *signature.at(0);
+                // Spending caps enforce at execute time, not validate.
+                self
+                    .spending_policy
+                    .check_and_update_spending(session_pubkey, outside_execution.calls);
+
+                let results = _execute_calls_atomic_span(outside_execution.calls);
+                self
+                    .emit(
+                        OutsideExecutionExecuted {
+                            owner_id: 0, // sessions don't map to an owner_id
+                            nonce: outside_execution.nonce,
+                            kind: 'SESSION',
+                            message_hash,
+                            calls_count,
+                        },
+                    );
+                return results;
+            }
+
+            // Owner-envelope header.
             assert(signature.len() >= OE_OWNER_ENVELOPE_HEADER_LEN, 'SRC9: sig too short');
             let version_tag = *signature.at(0);
             assert(version_tag == SIG_VERSION_V2_SNIP12, 'SHHH: unsupported sig version');
@@ -276,11 +339,6 @@ pub mod ShhhAccount {
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
 
-            // 6. SNIP-12 hash + library_call dispatch.
-            let chain_id = get_tx_info().unbox().chain_id;
-            let message_hash = compute_snip12_hash(
-                @outside_execution, get_contract_address(), chain_id,
-            );
             let verifier_class = self.verifier_classes.read(owner.kind);
             assert(Into::<ClassHash, felt252>::into(verifier_class) != 0, 'SHHH: verifier missing');
 
@@ -290,10 +348,9 @@ pub mod ShhhAccount {
             let ok = dispatcher.verify(message_hash, pubkey.span(), verifier_payload);
             assert(ok, 'SHHH: signature invalid');
 
-            // 7. Atomic multicall (H-1).
+            // 6. Atomic multicall (H-1).
             let results = _execute_calls_atomic_span(outside_execution.calls);
 
-            // 8. Indexer event — full identifying info.
             self
                 .emit(
                     OutsideExecutionExecuted {
@@ -676,6 +733,66 @@ pub mod ShhhAccount {
     }
 
     // ------------------------------------------------------------------
+    // Phase 7 — session keys + spending policy.
+    //
+    // Session management is owner-gated via `caller == self` (the
+    // components' HasAccountOwner seam). Session signatures verify via
+    // the 4-element path in execute_from_outside_v2. Spending caps
+    // enforce per-token limits with rolling windows.
+    // ------------------------------------------------------------------
+
+    #[external(v0)]
+    fn add_or_update_session_key(
+        ref self: ContractState,
+        session_key: felt252,
+        valid_until: u64,
+        max_calls: u32,
+        allowed_entrypoints: Array<felt252>,
+    ) {
+        self
+            .session_key
+            .add_or_update_session_key(session_key, valid_until, max_calls, allowed_entrypoints)
+    }
+
+    #[external(v0)]
+    fn revoke_session_key(ref self: ContractState, session_key: felt252) {
+        self.session_key.revoke_session_key(session_key)
+    }
+
+    #[external(v0)]
+    fn get_session_data(self: @ContractState, session_key: felt252) -> SessionData {
+        self.session_key.get_session_data(session_key)
+    }
+
+    #[external(v0)]
+    fn set_spending_policy(
+        ref self: ContractState,
+        session_key: felt252,
+        token: ContractAddress,
+        max_per_call: u256,
+        max_per_window: u256,
+        window_seconds: u64,
+    ) {
+        self
+            .spending_policy
+            .set_spending_policy(session_key, token, max_per_call, max_per_window, window_seconds)
+    }
+
+    #[external(v0)]
+    fn remove_spending_policy(
+        ref self: ContractState, session_key: felt252, token: ContractAddress,
+    ) {
+        self.spending_policy.remove_spending_policy(session_key, token)
+    }
+
+    #[external(v0)]
+    fn get_spending_policy(
+        self: @ContractState, session_key: felt252, token: ContractAddress,
+    ) -> SpendingPolicy {
+        self.spending_policy.get_spending_policy(session_key, token)
+    }
+
+    // ------------------------------------------------------------------
     // Phase 6.5 — sessions-wallet migration (chipi-pay/sessions-smart-contract).
     //
     // A `chipi-pay/sessions-smart-contract` wallet (`starknet-io/SNIPs#163`
@@ -799,6 +916,66 @@ pub mod ShhhAccount {
 
     fn _assert_self_call() {
         assert(get_caller_address() == get_contract_address(), 'SHHH: caller != self');
+    }
+
+    /// Session-sig validation (SNIPs#163 base blocklist + V8 extension).
+    fn _verify_session_sig_and_consume(
+        ref self: ContractState, calls: Span<Call>, signature: Span<felt252>, message_hash: felt252,
+    ) {
+        let session_pubkey = *signature.at(0);
+        let r = *signature.at(1);
+        let s = *signature.at(2);
+        let valid_until: u64 = (*signature.at(3)).try_into().expect('SESSION: bad valid_until');
+
+        assert(get_block_timestamp() <= valid_until, 'SESSION: expired');
+
+        // Ported SNIPs#163 guard chain: session exists, expiry, call count,
+        // admin blocklist (base), self-call block if whitelist empty,
+        // selector whitelist.
+        assert(
+            self.session_key.is_session_allowed_for_calls(session_pubkey, calls),
+            'SESSION: call not allowed',
+        );
+
+        // V8-specific blocklist — reject any call targeting our governance,
+        // recovery, migration, or verifier-class mutators.
+        assert(_v8_blocklist_ok(calls, get_contract_address()), 'SESSION: V8-blocked selector');
+
+        assert(check_ecdsa_signature(message_hash, session_pubkey, r, s), 'SESSION: bad signature');
+
+        self.session_key.consume_session_call(session_pubkey);
+    }
+
+    /// V8-specific admin selectors that sessions must never reach.
+    fn _v8_blocklist_ok(calls: Span<Call>, self_addr: ContractAddress) -> bool {
+        let mut i: u32 = 0;
+        while i < calls.len() {
+            let call = calls.at(i);
+            if *call.to == self_addr {
+                let sel = *call.selector;
+                if sel == selector!("propose_add_owner")
+                    || sel == selector!("propose_remove_owner")
+                    || sel == selector!("propose_rotate_owner")
+                    || sel == selector!("propose_set_threshold")
+                    || sel == selector!("propose_add_verifier_class")
+                    || sel == selector!("propose_remove_verifier_class")
+                    || sel == selector!("execute_add_owner")
+                    || sel == selector!("execute_remove_owner")
+                    || sel == selector!("execute_rotate_owner")
+                    || sel == selector!("execute_set_threshold")
+                    || sel == selector!("execute_add_verifier_class")
+                    || sel == selector!("execute_remove_verifier_class")
+                    || sel == selector!("cancel_pending_op")
+                    || sel == selector!("initiate_recovery")
+                    || sel == selector!("cancel_recovery")
+                    || sel == selector!("finalize_recovery")
+                    || sel == selector!("bootstrap_from_sessions") {
+                    return false;
+                }
+            }
+            i += 1;
+        }
+        true
     }
 
     fn _slice_from(span: Span<felt252>, start: u32) -> Span<felt252> {
