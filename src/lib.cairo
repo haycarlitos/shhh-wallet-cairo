@@ -36,6 +36,9 @@ pub mod signer {
     pub mod stark {
         pub mod verifier;
     }
+    pub mod webauthn_p256 {
+        pub mod verifier;
+    }
 }
 
 // ----- Multi-owner storage (Phase 4) -----

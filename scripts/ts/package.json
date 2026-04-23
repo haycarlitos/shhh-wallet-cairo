@@ -9,6 +9,7 @@
     "snip12-test": "node --experimental-vm-modules --test snip12-hash.test.ts"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "@noble/ed25519": "^3.1.0",
     "ethers": "^6.16.0",
     "garaga": "^1.0.1",
