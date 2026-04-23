@@ -676,6 +676,75 @@ pub mod ShhhAccount {
     }
 
     // ------------------------------------------------------------------
+    // Phase 6.5 — sessions-wallet migration (chipi-pay/sessions-smart-contract).
+    //
+    // A `chipi-pay/sessions-smart-contract` wallet (`starknet-io/SNIPs#163`
+    // reference impl) can migrate into V8 via two atomic steps bundled in
+    // one OE signed by the current sessions owner:
+    //
+    //   1. `upgrade(SHHH_ACCOUNT_CLASS_HASH)` — OZ UpgradeableComponent
+    //      swaps the class to ShhhAccount; sessions substorage is
+    //      preserved.
+    //   2. `bootstrap_from_sessions(public_key, verifier_class, label)` —
+    //      this entrypoint, run against the new ShhhAccount class. Sets
+    //      V8 primary-owner storage, registers the STARK verifier, emits
+    //      indexer events.
+    //
+    // Atomicity requirement: the two calls MUST be part of the same OE
+    // multicall. If called as separate txs, a front-runner could steal
+    // the account between upgrade and bootstrap. The migration SDK
+    // (scripts/ts/migrate-sessions-wallet.ts) bundles them by default.
+    //
+    // Gate: `primary_kind == 0` means "V8 not initialized yet". Both
+    // fresh constructor-deployed accounts and already-bootstrapped
+    // sessions upgrades land with primary_kind != 0, so the function
+    // only succeeds once per account lifetime.
+    //
+    // Recovery, session keys, and spending policies in the OLD
+    // substorage layout are preserved but NOT re-wired into V8 by this
+    // bootstrap. Phase 7 adds a second-step migration that lifts
+    // session data into the V8 session-key component.
+    // ------------------------------------------------------------------
+
+    #[external(v0)]
+    fn bootstrap_from_sessions(
+        ref self: ContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+    ) {
+        // One-shot gate: V8 primary owner is frozen for the life of the
+        // account. Trying to rebootstrap an already-initialized account
+        // is an invariant violation.
+        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
+
+        assert(public_key != 0, 'MIG: public_key is zero');
+        let verifier_felt: felt252 = stark_verifier_class.into();
+        assert(verifier_felt != 0, 'MIG: verifier class zero');
+
+        // Same derivations the constructor uses.
+        let kind = 'STARK';
+        let pubkey_span = array![public_key].span();
+        let commitment = crate::signer::interface::owner_commitment(kind, pubkey_span);
+        let salt = core::poseidon::poseidon_hash_span(array![kind, commitment].span());
+
+        self.primary_kind.write(kind);
+        self.primary_pubkey_hash.write(commitment);
+        self.address_salt.write(salt);
+        self.owners.initialize_primary(kind, commitment, pubkey_span, label);
+        self.verifier_classes.write(kind, stark_verifier_class);
+        self.src5.register_interface(ISRC9_V2_ID);
+
+        self
+            .emit(
+                PrimaryOwnerInitialized {
+                    kind, pubkey_hash: commitment, verifier_class: stark_verifier_class, salt,
+                },
+            );
+        self.emit(VerifierClassAdded { kind, class_hash: stark_verifier_class });
+    }
+
+    // ------------------------------------------------------------------
     // Read-only introspection
     // ------------------------------------------------------------------
 
