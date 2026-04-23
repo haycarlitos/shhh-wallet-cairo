@@ -60,6 +60,10 @@ Cross-language fixtures use `@noble/ed25519`, `ethers.js`, and `@noble/curves` s
 - Carlos Castillo ([@haycarlitos](https://github.com/haycarlitos))
 - Omar Espejel ([@omarespejel](https://github.com/omarespejel)) — co-author by virtue of the audit that catalyzed this SNIP; also co-author on the Session Keys SNIP that this one stacks on.
 
+## Acknowledgments
+
+- **Henri** — collaborator on `haycarlitos/shhh-wallet-cairo`. Ran the Nethermind AuditAgent scan on the V7 commit range (`70eeef3...f83ed1d4`) on 2026-04-13, one week before Omar's human review. His three findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) were the first external signal that the authorization layer had structural issues and triggered the decision to ship V8 as a rewrite rather than a V7 patch. Per the Nethermind AuditAgent license this is a credit to Henri as the collaborator who ran and triaged the scan, not a claim that the code is "audited by Nethermind."
+
 ## Status
 
 Draft — open to changes from the community review. Not finalized until the reference implementation completes an independent audit (planned Phase 13–14 on the reference repo).

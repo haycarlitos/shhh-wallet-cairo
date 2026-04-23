@@ -3,6 +3,7 @@
 > **Community discussion for the SNIP draft opened as [PR #NNN](https://github.com/starknet-io/SNIPs/pull/NNN) against `starknet-io/SNIPs`.**
 >
 > Co-authored by Carlos Castillo ([@haycarlitos](https://github.com/haycarlitos)) and Omar Espejel ([@omarespejel](https://github.com/omarespejel)).
+> With thanks to **Henri**, collaborator on `haycarlitos/shhh-wallet-cairo`, whose 2026-04-13 Nethermind AuditAgent scan first surfaced the three structural findings (C-1 / H-1 / I-3) that triggered the V8 rewrite a week before Omar's deep review.
 
 ## One-line thesis
 

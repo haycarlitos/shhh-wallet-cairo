@@ -47,7 +47,7 @@ Starknet's account model already permits arbitrary signature schemes: every acco
 
 Each is correct for its niche. None can verify a signature produced by another. A user who holds a Phantom wallet cannot use Argent's guardian recovery; a Cartridge passkey cannot sign a Chipi session-key invocation; zkLogin JWTs cannot share an account class with any of the above.
 
-**This SNIP was motivated directly by the April 2026 security audit of the Shhh wallet** (Codex/Cairo auditor workflow, 2026-04-20, [report](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e)). Three findings converged on the same root cause:
+**This SNIP was motivated directly by the April 2026 security review of the Shhh wallet.** Two converging signals: a Nethermind-AuditAgent scan run on 2026-04-13 by Henri (a repo collaborator; three structural findings) followed by Omar Espejel's human Codex/Cairo audit on 2026-04-20 ([report](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e); twelve findings). Three of Omar's findings converged on the same root cause Henri's scan first surfaced:
 
 1. **H-2 — SRC-5 interface ID mismatch.** The Shhh wallet advertised SNIP-9 V2 support but registered a custom interface ID and signed a custom byte envelope. The audit correctly noted that dapps, SDKs, and paymasters probing for SNIP-9 V2 would get incorrect results. The root cause was not bad intent — it was that there is no standard way to say "this account uses Ed25519 for owner signatures."
 2. **M-1 — `caller == 0` sentinel ambiguity.** The contract accepted both `0` and `'ANY_CALLER'` as unrestricted sentinels because SNIP-9 and the Phantom-specific path had diverged. Again: no standard envelope, no standard dispatcher.
@@ -341,6 +341,12 @@ Cross-kind tests:
 - Two accounts with identical raw key bytes but different `signer_kind` MUST yield different addresses (Part E).
 - An envelope with kind tag `X` submitted to an account with `signer_kind() = Y` MUST revert.
 - The 4-element session-key envelope MUST be correctly dispatched to the session-key path, not to owner verification.
+
+## Acknowledgments
+
+- **Henri** — collaborator on `haycarlitos/shhh-wallet-cairo`. Ran the Nethermind AuditAgent scan on the V7 commit range on 2026-04-13, one week before Omar's human review, surfacing the three structural findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is a credit to Henri as the collaborator who ran and triaged the scan, not a claim that the code is "audited by Nethermind."
+- **Chipi Pay and Omar Espejel** — Session Keys SNIP ([starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163)), which established the modular-account pattern this SNIP extends.
+- **Garaga team (Keep Starknet Strange)** — Ed25519, secp256k1, and P-256 verification primitives that make curve-agnostic signer verification practical on Starknet today.
 
 ## Copyright
 
