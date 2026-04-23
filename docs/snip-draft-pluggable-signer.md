@@ -9,6 +9,7 @@ type: Standards Track
 category: SRC
 created: 2026-04-16
 requires: SNIP-5, SNIP-6, SNIP-9, SNIP-12, Session Keys SNIP (starknet-io/SNIPs#163, `SNIPS/snip-x.md`)
+reference-impl: https://github.com/haycarlitos/shhh-wallet-cairo/tree/v8-robust (commit 6c30576)
 ---
 
 ## Simple Summary
@@ -294,14 +295,37 @@ Without salt binding, a key re-encoded across curves could map to the same addre
 
 ## Reference Implementation
 
-The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo) starting at V8 (post audit 2026-04-20), with one account-class target per canonical kind sharing a common `ISigner` trait. It embeds:
+The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo), branch `v8-robust`, pinned at commit **`6c30576`** (Phase 10 exit). V8 deploys a single `ShhhAccount` class that dispatches signature verification to four separately-declared verifier classes via `library_call_syscall`:
 
-- `ed25519/component.cairo` — Garaga v1.0.1 verifier (production-tested on Starknet mainnet as the V7 Shhh wallet)
-- `secp256k1/component.cairo` — Garaga verifier
-- `webauthn_p256/component.cairo` — Garaga verifier + WebAuthn envelope assembly
-- `stark_ecdsa/component.cairo` — `core::ecdsa` wrapper matching the OZ account
+| Kind tag           | Verifier class               | Primitive used                                     |
+|--------------------|------------------------------|----------------------------------------------------|
+| `STARK`            | `StarkVerifier`              | `core::ecdsa::check_ecdsa_signature`               |
+| `ED25519`          | `Ed25519Verifier`            | Garaga v1.0.1 `is_valid_eddsa_signature`            |
+| `SECP256K1`        | `Secp256k1Verifier`          | `starknet::secp256_trait::recover_public_key`      |
+| `WEBAUTHN_P256`    | `WebAuthnP256Verifier`       | `starknet::secp256_trait::is_valid_signature` (P-256) |
 
-The V8 codebase incorporates the twelve findings from the [2026-04-20 Codex/Cairo audit](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e) as regression tests. The reference implementation ships with the full audit-response PR as its commit history.
+Cross-language fixtures (`@noble/ed25519`, `ethers.js`, `@noble/curves`) sign one canonical SNIP-12 hash across all four curves so the audit surface is "one hash, four verifiers, one envelope shape."
+
+Verification evidence on commit `6c30576`:
+
+- **`scarb build`** — green under Scarb 2.14, Cairo 2.14, Sierra 1.7
+- **`scarb fmt --check`** — clean
+- **`snforge test`** — 104 passed, 0 failed, 5 ignored (ignored reasons documented in source; no unfixed findings)
+- **Mutation testing** (`scripts/mutation-test.sh`) — 8 of 10 mutants killed by the suite; 2 documented gaps covered by a Phase 11 STARK-signed fixture (nonce replay) and a deploy-hint panic (snforge `#[should_panic]` capture limitation). The harness exits 0 under these documented constraints.
+- **Fuzz testing** — 7 `#[fuzzer]` tests × 256 runs = 1792 random sweeps across authorization, timelock, and M-3 bounds.
+
+The V8 codebase incorporates the twelve findings from the [2026-04-20 Codex/Cairo audit](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e) as regression tests. Each audit finding has a dedicated `test_*` that fires the guard on real contract code — the audit history is reviewable in the commit log (Phase 0 → Phase 10).
+
+V8 also extends the reference to cover the full modular-account stack:
+
+- **Multi-owner storage** with weighted threshold, roles (OWNER / GUARDIAN / RECOVERY_ONLY), tombstone-based removal.
+- **Deterministic addresses**: `salt = poseidon(primary_kind, primary_pubkey_hash)`.
+- **Timelocked governance**: propose/execute/cancel state machine for every structural mutation.
+- **Guardian recovery**: 7-day window, additive, single-owner cancel.
+- **Sessions-wallet migration**: atomic `upgrade(V8) + bootstrap_from_sessions(...)` lets existing `chipi-pay/sessions-smart-contract` wallets (Session Keys SNIP #163 reference impl) migrate into V8 in one OE.
+- **Session keys + spending policies** (Session Keys SNIP #163) coexist with owner signatures via the length-routed envelope — pluggable-signer SNIP and #163 are designed to stack.
+
+This is the first Cairo codebase that ships all four signer kinds with identical envelope surfaces, proven end-to-end, and passes a mutation sweep that confirms every audit guard is load-bearing.
 
 ## Test Cases
 
