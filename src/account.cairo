@@ -107,6 +107,13 @@ pub mod ShhhAccount {
         verifier_classes: Map<felt252, ClassHash>,
         // SRC9 nonces.
         oe_nonces: Map<felt252, bool>,
+        // Reentrancy guard — set for the duration of
+        // `execute_from_outside_v2`. Any subcall that tries to re-enter
+        // the OE path reverts with 'SHHH: reentrant'. Defense-in-depth
+        // against attacker-controlled target contracts that have a
+        // session-key envelope in hand and try to stack a second
+        // execution on top of the first.
+        oe_in_progress: bool,
         // Components.
         #[substorage(v0)]
         src5: SRC5Component::Storage,
@@ -286,6 +293,14 @@ pub mod ShhhAccount {
         fn execute_from_outside_v2(
             ref self: ContractState, outside_execution: OutsideExecution, signature: Span<felt252>,
         ) -> Array<Span<felt252>> {
+            // 0. Reentrancy guard — set before any state mutation; cleared
+            // at every return path. A subcall that re-enters via any OE
+            // surface reverts. Nonce dedup already prevents same-nonce
+            // replay; this adds defense-in-depth for a malicious target
+            // that holds independent signatures and tries to interleave.
+            assert(!self.oe_in_progress.read(), 'SHHH: reentrant');
+            self.oe_in_progress.write(true);
+
             // 1. Caller check (M-1).
             let caller_felt: felt252 = outside_execution.caller.into();
             if caller_felt == 'ANY_CALLER' {
@@ -343,6 +358,7 @@ pub mod ShhhAccount {
                             calls_count,
                         },
                     );
+                self.oe_in_progress.write(false);
                 return results;
             }
 
@@ -404,6 +420,7 @@ pub mod ShhhAccount {
                         },
                     );
 
+                self.oe_in_progress.write(false);
                 return results;
             }
 
@@ -442,6 +459,7 @@ pub mod ShhhAccount {
                     },
                 );
 
+            self.oe_in_progress.write(false);
             results
         }
 

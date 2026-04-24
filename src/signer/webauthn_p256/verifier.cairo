@@ -19,15 +19,22 @@
 //! Verification (any failure ⇒ `return false`):
 //!   1. `authenticator_data.len() >= 37`
 //!   2. UP flag bit set: `authenticator_data[32] & 0x01 == 0x01`
-//!   3. Challenge binding: 43 ASCII bytes at `client_data_json[off..off+43]`
+//!   3. Type binding: `client_data_json` starts with the exact bytes
+//!      `{"type":"webauthn.get"` (22 bytes). WebAuthn Level 3 §5.8.1.1
+//!      mandates `type` as the first key in the CollectedClientData
+//!      serialization, so a strict prefix check is sufficient. This
+//!      closes the H-1 finding — otherwise a phishing site could
+//!      collect a `webauthn.create` signature over our SNIP-12
+//!      challenge and replay it as authentication.
+//!   4. Challenge binding: 43 ASCII bytes at `client_data_json[off..off+43]`
 //!      equal base64url(`message_hash` as 32 big-endian bytes, no padding)
-//!   4. `sha_inner  = sha256(client_data_json)`
-//!   5. `sha_outer  = sha256(authenticator_data || sha_inner)`
-//!   6. ECDSA verify (r, s) against `sha_outer` under stored (x, y)
+//!   5. `sha_inner  = sha256(client_data_json)`
+//!   6. `sha_outer  = sha256(authenticator_data || sha_inner)`
+//!   7. ECDSA verify (r, s) against `sha_outer` under stored (x, y)
 //!
-//! We deliberately do *not* parse the JSON structurally; callers supply
-//! `challenge_offset` and the check reduces to a 43-byte substring
-//! equality against a deterministically-reconstructed expected string.
+//! We deliberately do *not* fully JSON-parse; callers supply
+//! `challenge_offset` and the checks reduce to two substring
+//! equalities against deterministic expected byte sequences.
 
 #[starknet::contract]
 pub mod WebAuthnP256Verifier {
@@ -41,6 +48,11 @@ pub mod WebAuthnP256Verifier {
     const POW_2_96: u128 = 0x1000000000000000000000000;
     const POW_2_64: u128 = 0x10000000000000000;
     const POW_2_32: u128 = 0x100000000;
+
+    /// 22 bytes: `{"type":"webauthn.get"` — the mandatory prefix of a
+    /// WebAuthn authentication assertion's clientDataJSON per WebAuthn
+    /// Level 3 §5.8.1.1 (type comes first in the canonical order).
+    const TYPE_PREFIX_LEN: u32 = 22;
 
     #[storage]
     struct Storage {}
@@ -155,7 +167,36 @@ pub mod WebAuthnP256Verifier {
                 return false;
             }
 
-            // 3. Challenge binding.
+            // 3. Type binding — clientDataJSON MUST start with the exact
+            // bytes `{"type":"webauthn.get"`. Rejects `webauthn.create`
+            // confusion attacks and any tampered clientData whose type
+            // field has been displaced from the canonical first position.
+            if client_data.len() < TYPE_PREFIX_LEN {
+                return false;
+            }
+            let prefix = webauthn_get_prefix();
+            let mut p: u32 = 0;
+            let mut type_ok = true;
+            while p < TYPE_PREFIX_LEN {
+                let got = match client_data.at(p) {
+                    Option::Some(b) => b,
+                    Option::None => {
+                        type_ok = false;
+                        break;
+                    },
+                };
+                let want = *prefix.at(p);
+                if got != want {
+                    type_ok = false;
+                    break;
+                }
+                p += 1;
+            }
+            if !type_ok {
+                return false;
+            }
+
+            // 4. Challenge binding.
             if challenge_offset + CHALLENGE_B64URL_LEN > client_data.len() {
                 return false;
             }
@@ -251,6 +292,35 @@ pub mod WebAuthnP256Verifier {
         out.append_byte(b64url_char((v / 0x40_u32) & 0x3f_u32));
 
         out
+    }
+
+    /// Returns the canonical 22-byte WebAuthn authentication assertion
+    /// prefix: `{"type":"webauthn.get"`.
+    fn webauthn_get_prefix() -> Array<u8> {
+        array![
+            0x7B, // '{'
+            0x22, // '"'
+            0x74, // 't'
+            0x79, // 'y'
+            0x70, // 'p'
+            0x65, // 'e'
+            0x22, // '"'
+            0x3A, // ':'
+            0x22, // '"'
+            0x77, // 'w'
+            0x65, // 'e'
+            0x62, // 'b'
+            0x61, // 'a'
+            0x75, // 'u'
+            0x74, // 't'
+            0x68, // 'h'
+            0x6E, // 'n'
+            0x2E, // '.'
+            0x67, // 'g'
+            0x65, // 'e'
+            0x74, // 't'
+            0x22 // '"'
+        ]
     }
 
     fn b64url_char(v: u32) -> u8 {

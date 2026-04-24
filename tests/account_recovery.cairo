@@ -55,6 +55,8 @@ trait IShhhGov<TContractState> {
         weight: u8,
         label: felt252,
     ) -> u32;
+    fn propose_remove_owner(ref self: TContractState, proposer: u32, owner_id: u32) -> felt252;
+    fn execute_remove_owner(ref self: TContractState, op_id: felt252, owner_id: u32);
 }
 
 #[starknet::interface]
@@ -80,6 +82,7 @@ trait IShhhRecovery<TContractState> {
 }
 
 const TIMELOCK_ADD_OWNER: u64 = 172_800; // 48h
+const TIMELOCK_REMOVE_OWNER: u64 = 86_400; // 24h
 const TIMELOCK_RECOVERY: u64 = 604_800; // 7d — Argent-aligned
 
 // --------------------------------------------------------------
@@ -279,4 +282,33 @@ fn test_guardian_cannot_cancel() {
     rec.initiate_recovery(guardian_id, 'STARK', array![0xDEAD], ROLE_OWNER, 1_u8, 'new');
     // Guardian tries to cancel — not an OWNER → must revert.
     rec.cancel_recovery(guardian_id);
+}
+
+// --------------------------------------------------------------
+// Revoked guardian cannot initiate recovery
+// --------------------------------------------------------------
+
+/// Edge case: once a guardian is removed (role tombstoned via
+/// `execute_remove_owner`), calling `initiate_recovery` with their
+/// owner_id MUST revert with 'RECOVERY: proposer revoked'. Without
+/// this guard, a compromised but removed guardian could still start
+/// the 7-day window, forcing the legitimate owner into a cancel race.
+#[test]
+#[should_panic(expected: 'RECOVERY: proposer revoked')]
+fn test_revoked_guardian_cannot_initiate_recovery() {
+    let (addr, guardian_id) = deploy_account_with_guardian();
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    let rec = IShhhRecoveryDispatcher { contract_address: addr };
+
+    // Remove the guardian via the standard timelocked flow.
+    let base_ts = TIMELOCK_ADD_OWNER + 100;
+    start_cheat_block_timestamp_global(base_ts);
+    start_cheat_caller_address(addr, addr);
+    let op = gov.propose_remove_owner(0_u32, guardian_id);
+    start_cheat_block_timestamp_global(base_ts + TIMELOCK_REMOVE_OWNER + 1);
+    gov.execute_remove_owner(op, guardian_id);
+
+    // Now the (revoked) guardian tries to kick off a recovery.
+    start_cheat_caller_address(addr, addr);
+    rec.initiate_recovery(guardian_id, 'STARK', array![0xDEAD], ROLE_OWNER, 1_u8, 'newphone');
 }

@@ -22,7 +22,8 @@ use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
 use starknet::ContractAddress;
 use super::signer_webauthn_fixture::{
     webauthn_message_hash, webauthn_pubkey, webauthn_signature_envelope,
-    webauthn_signature_envelope_no_up, webauthn_signature_envelope_wrong_offset,
+    webauthn_signature_envelope_missing_type, webauthn_signature_envelope_no_up,
+    webauthn_signature_envelope_wrong_offset, webauthn_signature_envelope_wrong_type,
 };
 
 fn deploy_verifier() -> ContractAddress {
@@ -89,4 +90,38 @@ fn test_webauthn_rejects_empty_pubkey() {
     let sig = webauthn_signature_envelope();
     let ok = d.verify(hash, array![].span(), sig.span());
     assert(!ok, 'empty pubkey accepted');
+}
+
+// ==========================================================
+// H-1: webauthn.create confusion attack must be rejected
+// ==========================================================
+
+/// clientDataJSON contains `type="webauthn.create"` instead of
+/// `webauthn.get`. The signature is cryptographically valid — an
+/// authenticator really signed that clientData during a registration
+/// ceremony. If we skipped the type check, a phishing site that
+/// coerced the user into a rewards-signup flow with our challenge
+/// embedded could harvest a signature that our wallet then accepts
+/// as authentication. The prefix check MUST reject.
+#[test]
+fn test_webauthn_rejects_create_type_confusion() {
+    let d = dispatcher();
+    let hash = webauthn_message_hash();
+    let pubkey = webauthn_pubkey();
+    let sig = webauthn_signature_envelope_wrong_type();
+    let ok = d.verify(hash, pubkey.span(), sig.span());
+    assert(!ok, 'webauthn.create accepted');
+}
+
+/// clientDataJSON omits the type field entirely. Even if the challenge
+/// substring is present, the verifier MUST reject because the prefix
+/// check fails before any ECDSA work.
+#[test]
+fn test_webauthn_rejects_missing_type() {
+    let d = dispatcher();
+    let hash = webauthn_message_hash();
+    let pubkey = webauthn_pubkey();
+    let sig = webauthn_signature_envelope_missing_type();
+    let ok = d.verify(hash, pubkey.span(), sig.span());
+    assert(!ok, 'missing type accepted');
 }

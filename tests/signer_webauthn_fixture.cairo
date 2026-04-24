@@ -73,3 +73,34 @@ pub fn webauthn_signature_envelope_no_up() -> Array<felt252> {
         0xd3ec1466b43314315db06ec5a97baaaa, 0x663a1f99b5dccbb79a619d24956b4b61, 0,
     ]
 }
+
+/// H-1 attack fixture: clientDataJSON has type="webauthn.create" instead
+/// of "webauthn.get". The challenge bytes still resolve correctly — an
+/// insufficient verifier (no type check) would accept this. Re-signed
+/// under the same private key so the ECDSA portion verifies; only the
+/// prefix check MUST reject.
+pub fn webauthn_signature_envelope_wrong_type() -> Array<felt252> {
+    array![
+        0x1, 0x1cea235b99d707117b9c3d7f4475d38006155e5ec160f4dc8d0e772e6f1bd5, 0x9e050000002a, 0x6,
+        0x4, 0x7b2274797065223a22776562617574686e2e637265617465222c226368616c,
+        0x6c656e6765223a2242627a574e4d354778794e4c313653776c5a7738587437,
+        0x74663161647a37657a5069505834686c364b6938222c226f726967696e223a,
+        0x2268747470733a2f2f63696672612e6d78222c2263726f73734f726967696e, 0x223a66616c73657d, 0x8,
+        0x27, 0xdf8dcf55b77fee672204d6a0a3140751, 0x622d4ac18490cb76d3c9ca470903c65f,
+        0xf306ae94666164a0d377cc8ee031ccac, 0x71162a0c36454cb6f497412a4b06ed28, 0,
+    ]
+}
+
+/// H-1 edge case: clientDataJSON missing the type field entirely. The
+/// challenge is still in a legal JSON key position, but the required
+/// prefix check fails before the verifier reaches ECDSA.
+pub fn webauthn_signature_envelope_missing_type() -> Array<felt252> {
+    array![
+        0x1, 0x1cea235b99d707117b9c3d7f4475d38006155e5ec160f4dc8d0e772e6f1bd5, 0x9e050000002a, 0x6,
+        0x2, 0x7b226368616c6c656e6765223a2242627a574e4d354778794e4c313653776c,
+        0x5a773858743774663161647a37657a5069505834686c364b6938222c226f72,
+        0x6967696e223a2268747470733a2f2f63696672612e6d78227d, 0x19, 0xe,
+        0x74b2fa02f08856249232e93c1ec6d36e, 0x2e18c9489797b72b79ebf52e9cdc16da,
+        0xc87e4683737c1e3cb5d4773682bfa310, 0x39da53c087eddb3c6c8505eef5048c06, 0,
+    ]
+}

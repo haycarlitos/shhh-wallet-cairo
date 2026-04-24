@@ -233,6 +233,84 @@ ${cairoArr(cdSerde.fullWords)}
     ]`;
     })()}
 }
+
+/// H-1 attack fixture: clientDataJSON has type="webauthn.create" instead
+/// of "webauthn.get". The challenge bytes still resolve correctly — an
+/// insufficient verifier (no type check) would accept this. Re-signed
+/// under the same private key so the ECDSA portion verifies; only the
+/// prefix check MUST reject.
+pub fn webauthn_signature_envelope_wrong_type() -> Array<felt252> {
+${await (async () => {
+  const badClientDataObj = { ...clientDataObj, type: 'webauthn.create' };
+  const badClientDataStr = JSON.stringify(badClientDataObj);
+  const badClientData = new TextEncoder().encode(badClientDataStr);
+  const badOffset =
+    badClientDataStr.indexOf(`"challenge":"${challengeStr}"`) + '"challenge":"'.length;
+  const badHInner = sha256(badClientData);
+  const badBase = new Uint8Array(authData.length + badHInner.length);
+  badBase.set(authData, 0);
+  badBase.set(badHInner, authData.length);
+  const badOuterHash = sha256(badBase);
+  const badSig = p256.sign(badOuterHash, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badCdSerde = byteArrayToFelts(badClientData);
+  return `    array![
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        ${felt(BigInt(badCdSerde.numFull))},
+${cairoArr(badCdSerde.fullWords)}
+        ${felt(badCdSerde.pendingWord)},
+        ${felt(BigInt(badCdSerde.pendingLen))},
+        ${felt(BigInt(badOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
+
+/// H-1 edge case: clientDataJSON missing the type field entirely. The
+/// challenge is still in a legal JSON key position, but the required
+/// prefix check fails before the verifier reaches ECDSA.
+pub fn webauthn_signature_envelope_missing_type() -> Array<felt252> {
+${await (async () => {
+  // Build a JSON that starts with `{"challenge":...}` — type omitted.
+  const badClientDataStr = `{"challenge":"${challengeStr}","origin":"https://cifra.mx"}`;
+  const badClientData = new TextEncoder().encode(badClientDataStr);
+  const badOffset =
+    badClientDataStr.indexOf(`"challenge":"${challengeStr}"`) + '"challenge":"'.length;
+  const badHInner = sha256(badClientData);
+  const badBase = new Uint8Array(authData.length + badHInner.length);
+  badBase.set(authData, 0);
+  badBase.set(badHInner, authData.length);
+  const badOuterHash = sha256(badBase);
+  const badSig = p256.sign(badOuterHash, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badCdSerde = byteArrayToFelts(badClientData);
+  return `    array![
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        ${felt(BigInt(badCdSerde.numFull))},
+${cairoArr(badCdSerde.fullWords)}
+        ${felt(badCdSerde.pendingWord)},
+        ${felt(BigInt(badCdSerde.pendingLen))},
+        ${felt(BigInt(badOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
 `;
 
 const here = dirname(fileURLToPath(import.meta.url));

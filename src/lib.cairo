@@ -76,5 +76,6 @@ pub mod account;
 
 // ----- Test helpers (declared so snforge can deploy them) -----
 pub mod test_helpers {
+    pub mod reentrant_target;
     pub mod target;
 }
