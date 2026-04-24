@@ -2,7 +2,7 @@
 
 **To:** Henri (collaborator, `haycarlitos/shhh-wallet-cairo`)
 **From:** Carlos Castillo (`@haycarlitos`)
-**Re:** Nethermind AuditAgent scan report, 2026-04-13 (`audit_agent_report_3_85ffb723-ab83-44c5-8e57-ae9b756569cd`)
+**Re:** Nethermind AuditAgent scan report, 2026-04-13 ([archived in-repo](../audits/2026-04-13-henri-nethermind-auditagent-scan.pdf))
 **Scanned commit range:** `70eeef3...f83ed1d4` (V7 pre-audit tree)
 
 ---

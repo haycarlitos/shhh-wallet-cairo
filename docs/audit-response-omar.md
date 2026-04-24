@@ -2,7 +2,7 @@
 
 **To:** Omar Espejel (`@omarespejel`)
 **From:** Carlos Castillo (`@haycarlitos`)
-**Re:** [Shhh Wallet Cairo Security Audit, 2026-04-20](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e)
+**Re:** [Shhh Wallet Cairo Security Audit, 2026-04-20](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e) ([archived in-repo](../audits/2026-04-20-omar-espejel-codex-audit.md))
 **Repo:** [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo)
 
 ---
