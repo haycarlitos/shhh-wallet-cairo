@@ -93,8 +93,6 @@ FAILED=()
 declare -a KNOWN_GAPS=(
   "l1_pubkey_range"   # V7 constructor panic fires at deploy-hint level
                       # which snforge's #[should_panic] can't capture.
-  "nonce_dedup"       # Needs a fixture-driven OE that succeeds on first
-                      # submission then replays (Phase 11 STARK fixture).
 )
 
 in_known_gaps() {

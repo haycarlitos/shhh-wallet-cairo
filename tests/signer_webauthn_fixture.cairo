@@ -37,9 +37,8 @@ pub fn webauthn_signature_envelope() -> Array<felt252> {
         0x7470733a2f2f63696672612e6d78222c2263726f73734f726967696e223a66, 0x616c73657d,
         0x5, // --- challenge_offset ---
         0x24, // --- r, s, y_parity ---
-        0xf7e3bb5ef7fd6c62eeb7be26cc330702,
-        0x1398d1205a720fb8d3bb0bec9c8bda3d, 0xd3ec1466b43314315db06ec5a97baaaa,
-        0x663a1f99b5dccbb79a619d24956b4b61, 0,
+        0xf7e3bb5ef7fd6c62eeb7be26cc330702, 0x1398d1205a720fb8d3bb0bec9c8bda3d,
+        0xd3ec1466b43314315db06ec5a97baaaa, 0x663a1f99b5dccbb79a619d24956b4b61, 0,
     ]
 }
 

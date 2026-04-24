@@ -9,6 +9,10 @@
 pub trait ITarget<TContractState> {
     fn set_value(ref self: TContractState, v: felt252);
     fn get_value(self: @TContractState) -> felt252;
+    /// Number of times `set_value` has been invoked. Distinguishes "did
+    /// the call execute at all" from "did it execute and write the same
+    /// value" — load-bearing for the nonce-replay mutation test.
+    fn get_call_count(self: @TContractState) -> u32;
 }
 
 #[starknet::contract]
@@ -18,6 +22,7 @@ pub mod Target {
     #[storage]
     struct Storage {
         value: felt252,
+        call_count: u32,
     }
 
     #[constructor]
@@ -27,9 +32,13 @@ pub mod Target {
     impl TargetImpl of super::ITarget<ContractState> {
         fn set_value(ref self: ContractState, v: felt252) {
             self.value.write(v);
+            self.call_count.write(self.call_count.read() + 1);
         }
         fn get_value(self: @ContractState) -> felt252 {
             self.value.read()
+        }
+        fn get_call_count(self: @ContractState) -> u32 {
+            self.call_count.read()
         }
     }
 }
