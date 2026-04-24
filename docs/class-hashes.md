@@ -1,0 +1,73 @@
+# V8 class hashes (pre-declare)
+
+These are the deterministic class hashes the V8 contracts **will** have
+once declared. Class hash in Cairo is a pure function of the compiled
+Sierra + CASM, so the values here are identical to what will appear on
+mainnet and sepolia when `starknet_declareContract` runs — you can
+publish them in README / SDK constants before the declare tx lands.
+
+Computed at commit `HEAD` of branch `v8-robust` with
+`sncast utils class-hash --contract-name <NAME>` under Scarb 2.14.0 /
+Cairo 2.14 / Sierra 1.7.
+
+## Production classes (V8)
+
+| Contract               | Class hash                                                                  | Role                                                     |
+|------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
+| `ShhhAccount`          | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8 account — dispatcher + multi-owner + timelock + recovery + sessions migration |
+| `StarkVerifier`        | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | STARK-curve owner signer                                 |
+| `Ed25519Verifier`      | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
+| `Secp256k1Verifier`    | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | secp256k1 owner signer (MetaMask / EVM wallets)          |
+| `P256Verifier`         | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
+| `WebAuthnP256Verifier` | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
+
+## Legacy (V7, pre-patch — already on mainnet)
+
+| Contract         | Class hash (mainnet, declared 2026-02)                                    | Notes                              |
+|------------------|---------------------------------------------------------------------------|------------------------------------|
+| `ShhhWallet` V7  | `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13`         | Single-owner Ed25519-only. Retained on mainnet for existing users; superseded by V8 for new deploys. |
+| `ShhhWallet` V7-patched | `0x0283ae3cf126c1423674298680ca3669949da935504ba78992fc6b32f000233c` | Audit-fix-in-place build in this branch. **Not declared on mainnet** — kept in-repo for regression tests and for audit cross-reference. |
+
+## Deploy status
+
+**None of the V8 hashes above are declared on mainnet or sepolia yet.**
+Declaration is gated on Phase 13 + Phase 14 audits (see
+`docs/v8-pr-body.md` checklist). The plan:
+
+1. Phase 13 — independent human audit of V8 scope.
+2. Phase 14 — second independent audit pass.
+3. Phase 15 — declare all 6 production classes on Starknet mainnet
+   from the deployer account (`0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`).
+
+Any change to V8 source code between now and Phase 15 will change these
+hashes. Anyone pinning them pre-declare SHOULD reference this doc's
+commit SHA alongside the hash.
+
+## How to reproduce
+
+```bash
+cd shhh-wallet-cairo
+git checkout v8-robust
+scarb build
+for c in ShhhAccount StarkVerifier Ed25519Verifier Secp256k1Verifier \
+         P256Verifier WebAuthnP256Verifier; do
+  sncast utils class-hash --contract-name "$c"
+done
+```
+
+The output MUST match the table above byte-for-byte; if it doesn't,
+the local Scarb / Cairo / Sierra versions drifted from the pinned
+values in `Scarb.toml` (`scarb 2.14.0` / `snforge_std v0.59.0`).
+
+## Declaration command (not for now)
+
+```bash
+# Phase 15 only, after audit sign-off. Run from the deployer account.
+sncast --account haycarlitos \
+       --rpc-url https://rpc.starknet.lava.build \
+       declare --contract-name ShhhAccount
+```
+
+Repeat for each class. Each declare is a one-time tx per class hash —
+subsequent accounts deploy *instances* via `deploy_syscall`, which does
+not require re-declaring.
