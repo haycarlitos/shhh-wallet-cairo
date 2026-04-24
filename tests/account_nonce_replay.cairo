@@ -46,7 +46,9 @@ fn deploy_account_and_target() -> (ContractAddress, ContractAddress, felt252) {
     let target_class = declare("Target").unwrap().contract_class();
 
     let kp = StarkCurveKeyPairImpl::from_secret_key(0xABCD_BEEF);
-    let calldata: Array<felt252> = array!['STARK', verifier_class.into(), 1, kp.public_key, 'alice'];
+    let calldata: Array<felt252> = array![
+        'STARK', verifier_class.into(), 1, kp.public_key, 'alice',
+    ];
     let (account, _) = account_class.deploy(@calldata).unwrap();
     let (target, _) = target_class.deploy(@array![]).unwrap();
     (account, target, kp.public_key)
@@ -64,9 +66,7 @@ fn build_signed_oe(
         execute_after: 10_000,
         execute_before: 10_000 + 3_600, // 1h, inside M-2 cap of 2h
         calls: array![
-            Call {
-                to: target, selector: selector!("set_value"), calldata: array![0xCAFE].span(),
-            },
+            Call { to: target, selector: selector!("set_value"), calldata: array![0xCAFE].span() },
         ]
             .span(),
     };
