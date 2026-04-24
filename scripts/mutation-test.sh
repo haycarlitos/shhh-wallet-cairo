@@ -88,11 +88,8 @@ run_mutant() {
 FAILED=()
 
 # Mutants with documented, acknowledged coverage gaps. Listed here so a
-# CI run exits 0 iff only the known gaps survive. Update this list when
-# the corresponding test lands.
+# CI run exits 0 iff only the known gaps survive. Empty is the goal.
 declare -a KNOWN_GAPS=(
-  "l1_pubkey_range"   # V7 constructor panic fires at deploy-hint level
-                      # which snforge's #[should_panic] can't capture.
 )
 
 in_known_gaps() {

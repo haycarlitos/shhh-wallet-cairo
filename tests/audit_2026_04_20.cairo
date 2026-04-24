@@ -261,33 +261,81 @@ fn test_m4_truncated_msg_reverts() {
 // L-1 — constructor rejects out-of-range pubkey halves
 // ============================================================
 
-/// L-1 guard is proven by `test_l1_valid_pubkey_halves_deploy_ok` (deploy
-/// with valid halves succeeds) and by direct code inspection:
-/// `src/wallet.cairo` constructor:
+/// L-1 guard: `src/wallet.cairo` constructor calls
 ///
 ///     let _: u128 = owner_pubkey_low.try_into().expect('L1: owner_low OOR');
 ///     let _: u128 = owner_pubkey_high.try_into().expect('L1: owner_high OOR');
 ///
-/// Attempting to deploy with `pubkey > u128::MAX` produces the panic
-/// string visible in snforge output (hint-level). `#[should_panic]`
-/// cannot capture hint-level exceptions from `.deploy()`, so the
-/// negative case is verified manually / by declare-fork-test instead.
-/// See `tests/README-audit.md` for the manual verification command.
-#[test]
-#[ignore]
-fn test_l1_constructor_rejects_pubkey_high_oor_MANUAL() {
-    let contract = declare("ShhhWallet").unwrap().contract_class();
-    let calldata: Array<felt252> = array![PUBKEY_LOW, 0x100000000000000000000000000000000];
-    let _ = contract.deploy(@calldata);
+/// Passing `pubkey > u128::MAX` makes `try_into()` return `None`, the
+/// `.expect(...)` fires the panic, and Starknet propagates the panic
+/// bytes through the deploy syscall as the `Err` variant of
+/// `SyscallResult`. snforge's `ContractClass::deploy()` returns that
+/// `SyscallResult` directly, so we can match on `Err(panic_data)` and
+/// assert on the canonical error felt.
+///
+/// Previously these tests were marked `#[ignore]` with the comment that
+/// `#[should_panic]` couldn't capture a constructor-time panic. The
+/// Result-match approach sidesteps that limitation entirely — a
+/// constructor panic is a first-class syscall error, not an uncatchable
+/// VM exception.
+
+/// Drains a `Result<_, Array<felt252>>` and checks that the first
+/// panic felt equals the expected error marker. Asserts are separate
+/// so a misread panic_data length produces a clean failure instead of
+/// an out-of-bounds index.
+fn assert_deploy_reverts_with(
+    result: starknet::SyscallResult<(starknet::ContractAddress, Span<felt252>)>, expected: felt252,
+) {
+    match result {
+        Result::Ok(_) => core::panic_with_felt252('L1: expected deploy to revert'),
+        Result::Err(panic_data) => {
+            assert(panic_data.len() > 0, 'L1: empty panic data');
+            assert(*panic_data.at(0) == expected, 'L1: wrong panic felt');
+        },
+    }
 }
 
-/// See _MANUAL high-OOR test — same rationale.
 #[test]
-#[ignore]
-fn test_l1_constructor_rejects_pubkey_low_oor_MANUAL() {
+fn test_l1_constructor_rejects_pubkey_low_oor() {
     let contract = declare("ShhhWallet").unwrap().contract_class();
+    // 2^128 = 1 << 128 — out of range for u128.
     let calldata: Array<felt252> = array![0x100000000000000000000000000000000, PUBKEY_HIGH];
-    let _ = contract.deploy(@calldata);
+    let result = contract.deploy(@calldata);
+    assert_deploy_reverts_with(result, 'L1: owner_low OOR');
+}
+
+#[test]
+fn test_l1_constructor_rejects_pubkey_high_oor() {
+    let contract = declare("ShhhWallet").unwrap().contract_class();
+    let calldata: Array<felt252> = array![PUBKEY_LOW, 0x100000000000000000000000000000000];
+    let result = contract.deploy(@calldata);
+    assert_deploy_reverts_with(result, 'L1: owner_high OOR');
+}
+
+#[test]
+fn test_l1_constructor_rejects_both_oor() {
+    // Both halves OOR — the low-side check fires first (constructor
+    // evaluates them in order), so the error felt is the low-OOR one.
+    // If a future refactor reverses the order, this test flags the
+    // behavior change instead of silently passing.
+    let contract = declare("ShhhWallet").unwrap().contract_class();
+    let calldata: Array<felt252> = array![
+        0x100000000000000000000000000000000, 0x100000000000000000000000000000000,
+    ];
+    let result = contract.deploy(@calldata);
+    assert_deploy_reverts_with(result, 'L1: owner_low OOR');
+}
+
+#[test]
+fn test_l1_constructor_rejects_exactly_u128_max_plus_one() {
+    // Boundary: 2^128 is the smallest OOR value. `u128::MAX` (2^128 - 1)
+    // MUST deploy successfully; 2^128 MUST revert. Guards against an
+    // off-by-one in the bound.
+    let contract = declare("ShhhWallet").unwrap().contract_class();
+    let ok: Array<felt252> = array![0xffffffffffffffffffffffffffffffff, PUBKEY_HIGH];
+    assert(contract.deploy(@ok).is_ok(), 'u128::MAX must deploy');
+    let bad: Array<felt252> = array![0x100000000000000000000000000000000, PUBKEY_HIGH];
+    assert_deploy_reverts_with(contract.deploy(@bad), 'L1: owner_low OOR');
 }
 
 #[test]
