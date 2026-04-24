@@ -348,7 +348,7 @@ Cross-kind tests:
 
 ## Acknowledgments
 
-- **Henri** — collaborator on `haycarlitos/shhh-wallet-cairo`. Ran the Nethermind AuditAgent scan on the V7 commit range on 2026-04-13, one week before Omar's human review, surfacing the three structural findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is a credit to Henri as the collaborator who ran and triaged the scan, not a claim that the code is "audited by Nethermind."
+- **Henri ([@l-henri](https://github.com/l-henri))** — collaborator on the Shhh project. Ran the Nethermind AuditAgent scan on the V7 commit range on 2026-04-13, one week before Omar's human review, surfacing the three structural findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is a credit to Henri as the collaborator who ran and triaged the scan, not a claim that the code is "audited by Nethermind."
 - **Chipi Pay and Omar Espejel** — Session Keys SNIP ([starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163)), which established the modular-account pattern this SNIP extends.
 - **Garaga team (Keep Starknet Strange)** — Ed25519, secp256k1, and P-256 verification primitives that make curve-agnostic signer verification practical on Starknet today.
 

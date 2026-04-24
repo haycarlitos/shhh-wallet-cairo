@@ -1,6 +1,6 @@
 # Response to Henri's 2026-04-13 Audit Scan
 
-**To:** Henri (collaborator, `haycarlitos/shhh-wallet-cairo`)
+**To:** Henri ([@l-henri](https://github.com/l-henri)) — collaborator on the Shhh project
 **From:** Carlos Castillo (`@haycarlitos`)
 **Re:** Nethermind AuditAgent scan report, 2026-04-13 ([archived in-repo](../audits/2026-04-13-henri-nethermind-auditagent-scan.pdf))
 **Scanned commit range:** `70eeef3...f83ed1d4` (V7 pre-audit tree)

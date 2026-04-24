@@ -144,7 +144,7 @@ At commit `HEAD` of this branch:
 
 - Carlos Castillo ([@haycarlitos](https://github.com/haycarlitos)) — V8 implementation, 12 phases.
 - Omar Espejel ([@omarespejel](https://github.com/omarespejel)) — 2026-04-20 Codex/Cairo audit that identified the SRC-5 / SNIP-9 gap; also co-author on Session Keys SNIP #163.
-- **Henri** — repo collaborator. Ran the Nethermind AuditAgent scan on 2026-04-13, one week before Omar's review, surfacing the three structural findings (C-1 / H-1 / I-3) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is credit to Henri as the collaborator who ran and triaged the scan, not a claim the code is "audited by Nethermind."
+- Henri ([@l-henri](https://github.com/l-henri)) — Shhh project collaborator. Ran the Nethermind AuditAgent scan on 2026-04-13, one week before Omar's review, surfacing the three structural findings (C-1 / H-1 / I-3) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is credit to Henri as the collaborator who ran and triaged the scan, not a claim the code is "audited by Nethermind."
 - Garaga team (Keep Starknet Strange) — Ed25519, secp256k1, and P-256 verification primitives.
 - Chipi Pay — `chipi-pay/sessions-smart-contract` source for the session-key + spending-policy components.
 

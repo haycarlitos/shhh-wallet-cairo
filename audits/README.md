@@ -6,7 +6,7 @@ table below chronologically (oldest first).
 
 | Date       | Auditor                                                       | Report                                                                   | Response                                                           | Findings                    |
 |------------|---------------------------------------------------------------|--------------------------------------------------------------------------|--------------------------------------------------------------------|-----------------------------|
-| 2026-04-13 | Henri (repo collaborator, via Nethermind AuditAgent)          | [`2026-04-13-henri-nethermind-auditagent-scan.pdf`](./2026-04-13-henri-nethermind-auditagent-scan.pdf) | [`docs/audit-response-henri.md`](../docs/audit-response-henri.md)  | 1 High + 1 Medium + 1 Info  |
+| 2026-04-13 | Henri ([@l-henri](https://github.com/l-henri)) — Shhh project collaborator, via Nethermind AuditAgent | [`2026-04-13-henri-nethermind-auditagent-scan.pdf`](./2026-04-13-henri-nethermind-auditagent-scan.pdf) | [`docs/audit-response-henri.md`](../docs/audit-response-henri.md) | 1 High + 1 Medium + 1 Info  |
 | 2026-04-20 | Omar Espejel ([@omarespejel](https://github.com/omarespejel)) | [`2026-04-20-omar-espejel-codex-audit.md`](./2026-04-20-omar-espejel-codex-audit.md) | [`docs/audit-response-omar.md`](../docs/audit-response-omar.md)    | 1 Critical + 2 High + 4 Med + 1 Low + 3 Info |
 
 ## Status of findings

@@ -101,7 +101,7 @@ At source commit `haycarlitos/shhh-wallet-cairo@6c30576`:
 
 - Carlos Castillo ([@haycarlitos](https://github.com/haycarlitos)) — reference implementation (V8 track, 11 phases from audit response to SNIP draft).
 - Omar Espejel ([@omarespejel](https://github.com/omarespejel)) — Codex audit (2026-04-20) that identified the SRC-5 / SNIP-9 gap + Session Keys SNIP co-author.
-- **Henri** — repo collaborator on `haycarlitos/shhh-wallet-cairo`. Ran the Nethermind AuditAgent scan on 2026-04-13, one week before Omar's human review, surfacing the three structural findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is a credit to Henri as the contributor who ran and triaged the scan — not a claim that the code is "audited by Nethermind."
+- **Henri ([@l-henri](https://github.com/l-henri))** — collaborator on the Shhh project. Ran the Nethermind AuditAgent scan on 2026-04-13, one week before Omar's human review, surfacing the three structural findings (unrestricted `__execute__`, non-atomic multicall, dead upgrade component) that triggered the V8 rewrite. Per the Nethermind AuditAgent license this is a credit to Henri as the contributor who ran and triaged the scan — not a claim that the code is "audited by Nethermind."
 - Garaga team (Keep Starknet Strange) — Ed25519 verification primitive.
 
 ## Status
