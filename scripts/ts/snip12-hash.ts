@@ -36,6 +36,7 @@ export const OE_DOMAIN_REVISION = 1n;
 
 export const SIG_VERSION_V1_HEX_ASCII = shortString.encodeShortString('V1_HEX_ASCII');
 export const SIG_VERSION_V2_SNIP12    = shortString.encodeShortString('V2_SNIP12');
+export const SIG_VERSION_V2_THRESHOLD = shortString.encodeShortString('V2_THRESHOLD');
 
 // ================================================================
 // Types

@@ -25,6 +25,7 @@
 import { hash, shortString, type Call } from 'starknet';
 import {
   SIG_VERSION_V2_SNIP12,
+  SIG_VERSION_V2_THRESHOLD,
   computeSnip12Hash,
   type OutsideExecution,
 } from '../snip12-hash.ts';
@@ -119,6 +120,57 @@ export async function signOutsideExecution(
     kindTag,
     ...curvePayload,
   ];
+
+  return { oe, envelope, messageHash };
+}
+
+/**
+ * Builds a threshold-signed OE envelope. Each `signers[i]` is asked to
+ * sign the same SNIP-12 hash; the resulting inner envelopes are
+ * concatenated under the `V2_THRESHOLD` outer frame:
+ *
+ *   [ V2_THRESHOLD, n, len_1, env_1..., len_2, env_2..., ... ]
+ *
+ * where each inner envelope is `[owner_id, kind_tag, ...curve_payload]`
+ * (no inner version tag — set once by the outer frame).
+ *
+ * Caller is responsible for providing `ownerIds` that match each
+ * signer's registered slot on the account; the account rejects
+ * duplicates and sums weights until the threshold is met.
+ */
+export async function signOutsideExecutionThreshold(
+  signers: Array<{ signer: DetectedSigner; ownerId: number }>,
+  input: {
+    accountAddress: bigint;
+    chainId: bigint;
+    nonce: bigint;
+    executeAfter: bigint;
+    executeBefore: bigint;
+    calls: Call[];
+    caller?: bigint;
+  },
+): Promise<SignedEnvelope> {
+  if (signers.length < 2) {
+    throw new Error('Threshold envelope needs >= 2 signers');
+  }
+  const ANY_CALLER = BigInt(shortString.encodeShortString('ANY_CALLER'));
+  const oe: OutsideExecution = {
+    caller: input.caller ?? ANY_CALLER,
+    nonce: input.nonce,
+    execute_after: input.executeAfter,
+    execute_before: input.executeBefore,
+    calls: input.calls,
+  };
+  const messageHash = computeSnip12Hash(oe, input.accountAddress, input.chainId);
+
+  const envelope: bigint[] = [BigInt(SIG_VERSION_V2_THRESHOLD), BigInt(signers.length)];
+  for (const { signer, ownerId } of signers) {
+    const payload = await signer.signHash(messageHash);
+    const kindTag = BigInt(shortString.encodeShortString(signer.kind));
+    const inner: bigint[] = [BigInt(ownerId), kindTag, ...payload];
+    envelope.push(BigInt(inner.length));
+    for (const x of inner) envelope.push(x);
+  }
 
   return { oe, envelope, messageHash };
 }

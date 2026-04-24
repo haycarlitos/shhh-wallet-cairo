@@ -4,7 +4,7 @@
 //! recovery bit, so the happy-path test tries both y_parity candidates
 //! (0 then 1) and expects exactly one to verify.
 
-use shhh_wallet::signer::interface::{ISignerDispatcher, ISignerDispatcherTrait, KIND_WEBAUTHN_P256};
+use shhh_wallet::signer::interface::{ISignerDispatcher, ISignerDispatcherTrait, KIND_P256};
 use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
 use starknet::ContractAddress;
 use super::signer_p256_fixture::{
@@ -12,7 +12,7 @@ use super::signer_p256_fixture::{
 };
 
 fn deploy_verifier() -> ContractAddress {
-    let class = declare("WebAuthnP256Verifier").unwrap().contract_class();
+    let class = declare("P256Verifier").unwrap().contract_class();
     let (addr, _) = class.deploy(@array![]).unwrap();
     addr
 }
@@ -28,7 +28,7 @@ fn dispatcher() -> ISignerDispatcher {
 #[test]
 fn test_p256_verifier_reports_kind() {
     let d = dispatcher();
-    assert(d.kind() == KIND_WEBAUTHN_P256, 'wrong kind');
+    assert(d.kind() == KIND_P256, 'wrong kind');
 }
 
 // ============================================================

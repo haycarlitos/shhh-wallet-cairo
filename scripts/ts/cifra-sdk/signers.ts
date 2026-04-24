@@ -50,6 +50,39 @@ function hashToHexAsciiBytes(h: bigint): Uint8Array {
   return new TextEncoder().encode(hex);
 }
 
+function toBase64Url(bytes: Uint8Array): string {
+  // Node.js (>=16) and modern browsers both support 'base64url'.
+  if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+    return Buffer.from(bytes).toString('base64url');
+  }
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  const b64 = btoa(binary);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Serialize a Uint8Array into the Cairo ByteArray Serde sequence:
+ *   [num_full_words: u32, ...full_words: felt252, pending_word: felt252, pending_len: u32]
+ * Each full word packs 31 bytes as a big-endian felt252.
+ */
+function byteArrayToFelts(bytes: Uint8Array): bigint[] {
+  const out: bigint[] = [];
+  const numFull = Math.floor(bytes.length / 31);
+  out.push(BigInt(numFull));
+  for (let i = 0; i < numFull; i++) {
+    let v = 0n;
+    for (let j = 0; j < 31; j++) v = (v << 8n) | BigInt(bytes[i * 31 + j]);
+    out.push(v);
+  }
+  const rem = bytes.length - numFull * 31;
+  let pending = 0n;
+  for (let j = 0; j < rem; j++) pending = (pending << 8n) | BigInt(bytes[numFull * 31 + j]);
+  out.push(pending);
+  out.push(BigInt(rem));
+  return out;
+}
+
 // ============================================================
 // Ed25519 (Phantom / Solana)
 // ============================================================
@@ -156,11 +189,12 @@ export async function detectSecp256k1Signer(options: {
 export async function detectWebAuthnSigner(options: {
   /** Credential public key bytes (uncompressed 0x04 || X || Y form after COSE decoding). */
   publicKey: Uint8Array;
-  /** WebAuthn `get()` response → (authenticatorData, clientDataJSON, signature). */
-  ceremony: () => Promise<{
+  /** WebAuthn `get()` response → (authenticatorData, clientDataJSON, compact signature). */
+  ceremony: (challengeB64Url: string) => Promise<{
     authenticatorData: Uint8Array;
     clientDataJSON: Uint8Array;
-    signatureDerOrCompact: Uint8Array;
+    /** 64-byte compact (r || s) — DER-encoded signatures must be converted beforehand. */
+    signatureCompact: Uint8Array;
   }>;
 }): Promise<DetectedSigner> {
   if (options.publicKey[0] !== 0x04 || options.publicKey.length !== 65) {
@@ -173,23 +207,46 @@ export async function detectWebAuthnSigner(options: {
     kind: 'WEBAUTHN_P256',
     pubkey: [x.low, x.high, y.low, y.high],
     handle: options,
-    async signHash(_hash) {
-      // Phase 9 verifier currently accepts a raw P-256 signature over
-      // the SNIP-12 hash. Full WebAuthn envelope (authenticatorData +
-      // clientDataJSON with challenge binding) lands in the next
-      // verifier variant. For Cifra MVP, the frontend calls the
-      // platform's navigator.credentials.get() and reads out the
-      // compact r/s; we pass y_parity=0 (verifier accepts either).
-      const { signatureDerOrCompact } = await options.ceremony();
-      if (signatureDerOrCompact.length !== 64) {
+    async signHash(hash) {
+      // V8 WebAuthn verifier requires a full authenticator-assertion
+      // envelope bound to `hash` via the base64url-encoded challenge
+      // embedded inside clientDataJSON.
+      //
+      // Caller builds the challenge from the 32-byte BE encoding of
+      // `hash`, passes it into `navigator.credentials.get({ publicKey:
+      // { challenge: ... } })`, and hands us back the authenticator
+      // output verbatim — we do NOT reparse the challenge.
+      const challengeBytes = hashToBe32Bytes(hash);
+      const challengeB64Url = toBase64Url(challengeBytes);
+      const { authenticatorData, clientDataJSON, signatureCompact } =
+        await options.ceremony(challengeB64Url);
+      if (signatureCompact.length !== 64) {
         throw new Error(
-          'WebAuthn signer MVP expects a 64-byte compact signature (r || s). ' +
-          'DER-encoded signatures need a Phase 9b parser not yet included.',
+          'WebAuthn signer expects a 64-byte compact signature (r || s). ' +
+          'Call ecdsa-lite / @noble/curves Signature.fromDER().toCompactRawBytes() first.',
         );
       }
-      const r = bytesBeToU256(signatureDerOrCompact.slice(0, 32));
-      const s = bytesBeToU256(signatureDerOrCompact.slice(32, 64));
-      return [r.low, r.high, s.low, s.high, 0n];
+      const cdStr = new TextDecoder().decode(clientDataJSON);
+      const challengeOffset = cdStr.indexOf(challengeB64Url);
+      if (challengeOffset < 0) {
+        throw new Error(
+          "WebAuthn clientDataJSON did not echo our challenge — either the " +
+          "browser stripped the base64url string or the challenge bytes " +
+          "didn't round-trip. Refuse to sign.",
+        );
+      }
+      const authDataFelts = byteArrayToFelts(authenticatorData);
+      const clientDataFelts = byteArrayToFelts(clientDataJSON);
+      const r = bytesBeToU256(signatureCompact.slice(0, 32));
+      const s = bytesBeToU256(signatureCompact.slice(32, 64));
+      return [
+        ...authDataFelts,
+        ...clientDataFelts,
+        BigInt(challengeOffset),
+        r.low, r.high,
+        s.low, s.high,
+        0n, // y_parity: verifier accepts either; shape-only field.
+      ];
     },
   };
 }

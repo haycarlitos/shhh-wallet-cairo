@@ -97,6 +97,11 @@ pub const OE_DOMAIN_REVISION: felt252 = 1;
 /// the V1 → V2 deprecation window.
 pub const SIG_VERSION_V1_HEX_ASCII: felt252 = 'V1_HEX_ASCII';
 pub const SIG_VERSION_V2_SNIP12: felt252 = 'V2_SNIP12';
+/// Threshold-signature envelope. Wraps N inner single-owner envelopes
+/// over the same SNIP-12 hash, each shaped `[owner_id, kind, payload...]`
+/// (no inner version tag). The account verifies each, rejects duplicate
+/// owner_ids, and requires `sum(weight_i) >= owner_set.threshold`.
+pub const SIG_VERSION_V2_THRESHOLD: felt252 = 'V2_THRESHOLD';
 
 /// Hash one `Call` per the SNIP-12 `Call` type.
 fn hash_call(call: @Call) -> felt252 {

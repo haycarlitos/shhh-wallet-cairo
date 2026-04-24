@@ -42,7 +42,8 @@ pub mod ShhhAccount {
         TIMELOCK_ROTATE_OWNER, TIMELOCK_SET_THRESHOLD,
     };
     use crate::outside_execution::{
-        ISRC9_V2, ISRC9_V2_ID, OutsideExecution, SIG_VERSION_V2_SNIP12, compute_snip12_hash,
+        ISRC9_V2, ISRC9_V2_ID, OutsideExecution, SIG_VERSION_V2_SNIP12, SIG_VERSION_V2_THRESHOLD,
+        compute_snip12_hash,
     };
     use crate::owner_set::component::OwnerSetComponent;
     use crate::owner_set::interface::{OwnerRecord, ROLE_GUARDIAN, ROLE_OWNER};
@@ -143,6 +144,7 @@ pub mod ShhhAccount {
         VerifierClassAdded: VerifierClassAdded,
         VerifierClassRemoved: VerifierClassRemoved,
         OutsideExecutionExecuted: OutsideExecutionExecuted,
+        ThresholdOutsideExecutionExecuted: ThresholdOutsideExecutionExecuted,
     }
 
     /// Fired once in the constructor. Carries the primary owner's salt
@@ -180,6 +182,20 @@ pub mod ShhhAccount {
         #[key]
         nonce: felt252,
         kind: felt252,
+        message_hash: felt252,
+        calls_count: u32,
+    }
+
+    /// Emitted after a successful threshold-signed `execute_from_outside_v2`.
+    /// Indexers key on `nonce` and can reconstruct which owners signed
+    /// by replaying the inner envelopes from the tx calldata.
+    #[derive(Drop, starknet::Event)]
+    struct ThresholdOutsideExecutionExecuted {
+        #[key]
+        nonce: felt252,
+        n_signers: u32,
+        total_weight: u32,
+        threshold: u8,
         message_hash: felt252,
         calls_count: u32,
     }
@@ -326,10 +342,70 @@ pub mod ShhhAccount {
                 return results;
             }
 
-            // Owner-envelope header.
-            assert(signature.len() >= OE_OWNER_ENVELOPE_HEADER_LEN, 'SRC9: sig too short');
+            // Owner-envelope header — version tag selects single vs threshold.
+            assert(signature.len() >= 2_u32, 'SRC9: sig too short');
             let version_tag = *signature.at(0);
+
+            if version_tag == SIG_VERSION_V2_THRESHOLD {
+                // Threshold envelope: [V2_THRESHOLD, n, env_1_len, env_1..., env_2_len, env_2...]
+                let n_felt = *signature.at(1);
+                let n: u32 = n_felt.try_into().expect('THRESH: bad n');
+                assert(n >= 2_u32, 'THRESH: need >= 2 envelopes');
+                assert(n <= self.owners.owner_count(), 'THRESH: n > owner_count');
+
+                let mut cursor: u32 = 2;
+                let mut total_weight: u32 = 0;
+                let mut seen_ids: Array<u32> = array![];
+                let threshold: u8 = self.owners.threshold_value();
+                let mut i: u32 = 0;
+                while i < n {
+                    assert(cursor < signature.len(), 'THRESH: truncated');
+                    let env_len: u32 = (*signature.at(cursor))
+                        .try_into()
+                        .expect('THRESH: bad env_len');
+                    cursor += 1;
+                    assert(env_len >= 2_u32, 'THRESH: inner too short');
+                    assert(cursor + env_len <= signature.len(), 'THRESH: env overflow');
+                    let sub = _slice_range(signature, cursor, cursor + env_len);
+                    let (owner_id, _kind, weight) = _verify_sub_envelope(
+                        ref self, sub, message_hash,
+                    );
+                    // Duplicate owner_id rejection.
+                    let mut k: u32 = 0;
+                    while k < seen_ids.len() {
+                        assert(*seen_ids.at(k) != owner_id, 'THRESH: duplicate owner_id');
+                        k += 1;
+                    }
+                    seen_ids.append(owner_id);
+                    let w_u32: u32 = weight.into();
+                    total_weight += w_u32;
+                    cursor += env_len;
+                    i += 1;
+                }
+                assert(cursor == signature.len(), 'THRESH: trailing bytes');
+                let thr_u32: u32 = threshold.into();
+                assert(total_weight >= thr_u32, 'THRESH: below threshold');
+
+                let results = _execute_calls_atomic_span(outside_execution.calls);
+
+                self
+                    .emit(
+                        ThresholdOutsideExecutionExecuted {
+                            nonce: outside_execution.nonce,
+                            n_signers: n,
+                            total_weight,
+                            threshold,
+                            message_hash,
+                            calls_count,
+                        },
+                    );
+
+                return results;
+            }
+
+            // Single-owner V2 envelope.
             assert(version_tag == SIG_VERSION_V2_SNIP12, 'SHHH: unsupported sig version');
+            assert(signature.len() >= OE_OWNER_ENVELOPE_HEADER_LEN, 'SRC9: sig too short');
 
             let owner_id: u32 = (*signature.at(1)).try_into().expect('SHHH: bad owner_id');
             assert(owner_id < self.owners.owner_count(), 'SHHH: unknown owner_id');
@@ -986,6 +1062,39 @@ pub mod ShhhAccount {
             i += 1;
         }
         out.span()
+    }
+
+    fn _slice_range(span: Span<felt252>, start: u32, end: u32) -> Span<felt252> {
+        let mut out: Array<felt252> = array![];
+        let mut i: u32 = start;
+        while i < end {
+            out.append(*span.at(i));
+            i += 1;
+        }
+        out.span()
+    }
+
+    /// Verifies one inner envelope shaped `[owner_id, kind_tag, payload...]`
+    /// (no version tag — that's handled once by the outer threshold frame).
+    /// Reverts on any integrity failure. Returns (owner_id, owner.kind, owner.weight).
+    fn _verify_sub_envelope(
+        ref self: ContractState, sub: Span<felt252>, message_hash: felt252,
+    ) -> (u32, felt252, u8) {
+        assert(sub.len() >= 2_u32, 'THRESH: inner too short');
+        let owner_id: u32 = (*sub.at(0)).try_into().expect('THRESH: bad owner_id');
+        assert(owner_id < self.owners.owner_count(), 'THRESH: unknown owner_id');
+        let owner: OwnerRecord = self.owners.get_owner(owner_id);
+        assert(!owner.revoked, 'THRESH: owner revoked');
+        let kind_tag = *sub.at(1);
+        assert(kind_tag == owner.kind, 'THRESH: kind mismatch');
+        let verifier_class = self.verifier_classes.read(owner.kind);
+        assert(Into::<ClassHash, felt252>::into(verifier_class) != 0, 'THRESH: verifier missing');
+        let pubkey = self.owners.read_pubkey_bytes(owner);
+        let payload = _slice_from(sub, 2);
+        let dispatcher = ISignerLibraryDispatcher { class_hash: verifier_class };
+        let ok = dispatcher.verify(message_hash, pubkey.span(), payload);
+        assert(ok, 'THRESH: inner sig invalid');
+        (owner_id, owner.kind, owner.weight)
     }
 
     fn _total_calldata_felts(calls: Span<Call>) -> u32 {
