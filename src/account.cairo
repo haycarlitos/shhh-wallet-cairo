@@ -50,7 +50,7 @@ pub mod ShhhAccount {
     use crate::recovery::component::RecoveryComponent;
     use crate::session_key::component::SessionKeyComponent;
     use crate::session_key::interface::SessionData;
-    use crate::signer::interface::{ISignerDispatcherTrait, ISignerLibraryDispatcher};
+    use crate::signer::interface::{ISIGNER_ID, ISignerDispatcherTrait, ISignerLibraryDispatcher};
     use crate::spending_policy::component::SpendingPolicyComponent;
     use crate::spending_policy::interface::SpendingPolicy;
 
@@ -229,8 +229,12 @@ pub mod ShhhAccount {
         // Register verifier class for the primary kind.
         self.verifier_classes.write(primary_kind, primary_verifier);
 
-        // SRC5: canonical SNIP-9 V2 interface (audit H-2).
+        // SRC5: canonical SNIP-9 V2 interface (audit H-2) + ISigner_V1
+        // trait surface so paymasters / SDKs can discover that this
+        // account exposes the pluggable-signer interface without having
+        // to infer it from the kind registry.
         self.src5.register_interface(ISRC9_V2_ID);
+        self.src5.register_interface(ISIGNER_ID);
 
         // Events (indexer rule: emit full state for the primary owner).
         self
@@ -927,6 +931,7 @@ pub mod ShhhAccount {
         self.owners.initialize_primary(kind, commitment, pubkey_span, label);
         self.verifier_classes.write(kind, stark_verifier_class);
         self.src5.register_interface(ISRC9_V2_ID);
+        self.src5.register_interface(ISIGNER_ID);
 
         self
             .emit(

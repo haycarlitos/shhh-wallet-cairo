@@ -10,10 +10,25 @@
 // SRC-5 interface IDs
 // ------------------------------------------------------------------
 
-/// Trait surface: `verify`, `owner_commitment`, `signer_kind`.
-/// Final value will be computed as starknetKeccak of the canonical trait
-/// signature before the SNIP is finalized.
-pub const ISIGNER_ID: felt252 = 0x0; // TODO(v8): compute final starknetKeccak
+/// SRC-5 interface ID for the pluggable-signer trait.
+///
+/// Canonical recipe: `starknet_keccak("ISigner_V1")`.
+///
+///   - `ISigner` is the trait name defined in this module.
+///   - `_V1` is a version tag; a breaking-trait-shape change (e.g. adding
+///     a new required method) MUST bump to `ISigner_V2` + register both.
+///
+/// The value MUST match any off-chain code that probes via
+/// `supports_interface(ISIGNER_ID)`. The TypeScript SDK exposes the
+/// same hex string from `scripts/ts/snip12-hash.ts`, and two parity
+/// checks wire the three sources shut so a silent edit to any one
+/// fails CI:
+///   - `tests/interface_ids.cairo` — Cairo ↔ canonical-literal guard
+///   - `scripts/ts/check-interface-ids.mjs` — TS ↔ starknet_keccak
+///     recomputation + TS ↔ Cairo constant equality
+///
+/// Final value (starknet.js v9 `hash.starknetKeccak("ISigner_V1")`):
+pub const ISIGNER_ID: felt252 = 0x94c5a761f34b25a4e603c651ac0e1fc4fad9cdb5517f7fa1bb54044c7e5ef8;
 
 // ------------------------------------------------------------------
 // Kind tag registry — MUST match SNIP Part B

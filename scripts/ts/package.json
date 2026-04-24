@@ -6,7 +6,8 @@
   "description": "TypeScript reference tooling for the Shhh Wallet V8 — SNIP-12 hashing, fixture regeneration, migration SDK.",
   "scripts": {
     "snip12-hash": "tsx snip12-hash.ts",
-    "snip12-test": "node --experimental-vm-modules --test snip12-hash.test.ts"
+    "snip12-test": "node --experimental-vm-modules --test snip12-hash.test.ts",
+    "check:interface-ids": "node check-interface-ids.mjs"
   },
   "dependencies": {
     "@noble/curves": "^2.2.0",

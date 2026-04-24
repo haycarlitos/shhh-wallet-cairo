@@ -129,11 +129,15 @@ pub trait ISigner<TContractState> {
 ```
 
 **SRC-5 interface ID**:
+
 ```
-ISIGNER_ID = 0x...   // starknetKeccak of the trait signature; final value TBD in reference impl
+ISIGNER_ID = starknet_keccak("ISigner_V1")
+           = 0x94c5a761f34b25a4e603c651ac0e1fc4fad9cdb5517f7fa1bb54044c7e5ef8
 ```
 
-Accounts MUST register `ISIGNER_ID` via SRC-5 at construction so that paymasters, wallets, and dapps can discover signer support.
+The canonical label is `"ISigner_V1"`. A breaking trait-shape change (e.g. adding a new required method, or changing a parameter / return type) MUST bump to `"ISigner_V2"` and register both IDs during a migration window. Non-breaking extensions MUST NOT bump the label.
+
+Accounts MUST register `ISIGNER_ID` via SRC-5 at construction so that paymasters, wallets, and dapps can discover signer support. Reference implementation registers the ID both on native V8 deploys and inside the sessions-wallet migration path so post-upgrade accounts look identical to fresh deployments via SRC-5 probing.
 
 ### Part B: Canonical Kind-Tag Registry
 

@@ -16,6 +16,7 @@ Deps already in `scripts/ts/package.json`: `starknet@^9`, `ethers@^6`, `@noble/e
 ```ts
 import {
   signOutsideExecution,
+  signOutsideExecutionThreshold,  // new — multi-signer envelopes
   computeAccountAddress,
   callAddOrUpdateSessionKey,
   callInitiateRecovery,
@@ -28,13 +29,31 @@ import {
   nowSec,
 } from './cifra-sdk';
 
+// SRC-5 interface IDs — use with `supports_interface(...)` to probe
+// capabilities without reading storage.
+import { ISIGNER_ID, ISRC9_V2_ID } from '../snip12-hash.ts';
+
 import {
   detectEd25519Signer,       // Phantom
   detectSecp256k1Signer,     // MetaMask / EVM
-  detectWebAuthnSigner,      // Face ID / passkeys
+  detectWebAuthnSigner,      // Face ID / passkeys (full WebAuthn envelope)
   detectStarkSigner,         // native Starknet
 } from './cifra-sdk/signers';
 ```
+
+### Capability discovery
+
+```ts
+const src5 = new Contract({ abi: SRC5_ABI, address: accountAddress, providerOrAccount: provider });
+const supportsISigner = await src5.supports_interface('0x' + ISIGNER_ID.toString(16));
+// supportsISigner === true  ⇒ account implements the pluggable-signer trait
+// supportsISigner === false ⇒ legacy / non-V8 account; fall back to kind-specific path
+```
+
+Canonical ID is `starknet_keccak("ISigner_V1")` — see
+`docs/snip-draft-pluggable-signer.md` Part G. CI enforces that the
+Cairo constant, the TS constant, and the SNIP text stay in lockstep
+via `npm run check:interface-ids`.
 
 ## Typical flows
 

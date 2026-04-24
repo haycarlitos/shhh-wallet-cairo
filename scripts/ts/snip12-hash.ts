@@ -38,6 +38,31 @@ export const SIG_VERSION_V1_HEX_ASCII = shortString.encodeShortString('V1_HEX_AS
 export const SIG_VERSION_V2_SNIP12    = shortString.encodeShortString('V2_SNIP12');
 export const SIG_VERSION_V2_THRESHOLD = shortString.encodeShortString('V2_THRESHOLD');
 
+// SRC-5 interface IDs. Use these with `supports_interface(...)` to probe
+// an account's capability surface without having to read storage.
+//
+// `ISIGNER_ID` = starknet_keccak("ISigner_V1"). The Cairo constant at
+// `src/signer/interface.cairo::ISIGNER_ID` MUST equal
+// `computeISignerId()` below — enforced by the cross-language test in
+// `scripts/ts/__tests__/interface-ids.test.mjs`.
+export const ISRC9_V2_ID = BigInt(
+  '0x1d1144bb2138366ff28d8e9ab57456b1d332ac42196230c3a602003c89872',
+);
+export const ISIGNER_ID = BigInt(
+  '0x94c5a761f34b25a4e603c651ac0e1fc4fad9cdb5517f7fa1bb54044c7e5ef8',
+);
+
+/** Canonical SRC-5 label for the pluggable-signer trait. Bump the
+ *  `_V1` suffix only on a breaking trait-shape change. */
+export const ISIGNER_CANONICAL_LABEL = 'ISigner_V1';
+
+/** Recomputes the canonical `ISIGNER_ID` at runtime. The parity test
+ *  asserts this value equals the hardcoded `ISIGNER_ID` in both this
+ *  file AND the Cairo constant — any drift fails CI. */
+export function computeISignerId(): bigint {
+  return BigInt(hash.starknetKeccak(ISIGNER_CANONICAL_LABEL));
+}
+
 // ================================================================
 // Types
 // ================================================================
