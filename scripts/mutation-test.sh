@@ -167,7 +167,10 @@ run_mutant "v8_blocklist" \
 echo
 UNEXPECTED=()
 EXPECTED=()
-for f in "${FAILED[@]}"; do
+# `set -u` trips on `"${FAILED[@]}"` when the array was never written
+# (which is the expected all-killed case when running a single-mutant
+# filter). Use the ${arr[@]+...} guard to sidestep.
+for f in ${FAILED[@]+"${FAILED[@]}"}; do
   if in_known_gaps "$f"; then
     EXPECTED+=("$f")
   else
