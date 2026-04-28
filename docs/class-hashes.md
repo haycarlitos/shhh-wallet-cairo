@@ -1,14 +1,15 @@
-# V8 class hashes (pre-declare)
+# V8 class hashes (declared on mainnet 2026-04-28)
 
-These are the deterministic class hashes the V8 contracts **will** have
-once declared. Class hash in Cairo is a pure function of the compiled
-Sierra + CASM, so the values here are identical to what will appear on
-mainnet and sepolia when `starknet_declareContract` runs — you can
-publish them in README / SDK constants before the declare tx lands.
+All six V8 classes are **live on Starknet mainnet**. Hashes are
+deterministic functions of the compiled Sierra, so the values below
+were known and published before declare and verified byte-for-byte
+post-declare.
 
-Computed at commit `HEAD` of branch `v8-robust` with
-`sncast utils class-hash --contract-name <NAME>` under Scarb 2.14.0 /
-Cairo 2.14 / Sierra 1.7.
+Build environment: Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7. Branch
+`v8-robust` at the declare commit.
+
+For declare-tx hashes, fees, and per-user cost estimates see
+[`mainnet-deployment.md`](./mainnet-deployment.md).
 
 ## Production classes (V8)
 
@@ -30,18 +31,13 @@ Cairo 2.14 / Sierra 1.7.
 
 ## Deploy status
 
-**None of the V8 hashes above are declared on mainnet or sepolia yet.**
-Declaration is gated on Phase 13 + Phase 14 audits (see
-`docs/v8-pr-body.md` checklist). The plan:
+**All six V8 classes are declared on Starknet mainnet** (2026-04-28).
+Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
+Total declare cost: 92.155 STRK ($3.53 at 2026-04-28 prices).
 
-1. Phase 13 — independent human audit of V8 scope.
-2. Phase 14 — second independent audit pass.
-3. Phase 15 — declare all 6 production classes on Starknet mainnet
-   from the deployer account (`0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`).
-
-Any change to V8 source code between now and Phase 15 will change these
-hashes. Anyone pinning them pre-declare SHOULD reference this doc's
-commit SHA alongside the hash.
+Phase 13 + 14 audits are now post-launch hardening rather than
+pre-launch gating. If a finding requires a redeploy, V8.1 = new class
+hash + opt-in migration (existing V8 wallets keep working).
 
 ## How to reproduce
 
@@ -59,15 +55,16 @@ The output MUST match the table above byte-for-byte; if it doesn't,
 the local Scarb / Cairo / Sierra versions drifted from the pinned
 values in `Scarb.toml` (`scarb 2.14.0` / `snforge_std v0.59.0`).
 
-## Declaration command (not for now)
+## Re-declare (only if a future V8.x is published)
+
+The recipe used 2026-04-28:
 
 ```bash
-# Phase 15 only, after audit sign-off. Run from the deployer account.
-sncast --account haycarlitos \
-       --rpc-url https://rpc.starknet.lava.build \
-       declare --contract-name ShhhAccount
+sncast --account deployer_oz \
+       declare --contract-name ShhhAccount \
+       --url https://starknet-rpc.publicnode.com
 ```
 
-Repeat for each class. Each declare is a one-time tx per class hash —
+(Run once per class. Each declare is a one-time tx per class hash —
 subsequent accounts deploy *instances* via `deploy_syscall`, which does
-not require re-declaring.
+not require re-declaring.)
