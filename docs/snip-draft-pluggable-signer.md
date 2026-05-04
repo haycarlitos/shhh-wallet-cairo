@@ -301,12 +301,14 @@ Without salt binding, a key re-encoded across curves could map to the same addre
 
 The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo), branch `v8-robust`, pinned at commit **`6c30576`** (Phase 10 exit). V8 deploys a single `ShhhAccount` class that dispatches signature verification to four separately-declared verifier classes via `library_call_syscall`:
 
-| Kind tag           | Verifier class               | Primitive used                                     |
-|--------------------|------------------------------|----------------------------------------------------|
-| `STARK`            | `StarkVerifier`              | `core::ecdsa::check_ecdsa_signature`               |
-| `ED25519`          | `Ed25519Verifier`            | Garaga v1.0.1 `is_valid_eddsa_signature`            |
-| `SECP256K1`        | `Secp256k1Verifier`          | `starknet::secp256_trait::recover_public_key`      |
-| `WEBAUTHN_P256`    | `WebAuthnP256Verifier`       | `starknet::secp256_trait::is_valid_signature` (P-256) |
+| Kind tag             | Verifier class               | Primitive used                                                                |
+|----------------------|------------------------------|-------------------------------------------------------------------------------|
+| `STARK`              | `StarkVerifier`              | `core::ecdsa::check_ecdsa_signature`                                          |
+| `ED25519`            | `Ed25519Verifier`            | Garaga v1.0.1 `is_valid_eddsa_signature`                                      |
+| `SECP256K1`          | `Secp256k1Verifier`          | `starknet::secp256_trait::recover_public_key`                                 |
+| `P256`               | `P256Verifier`               | `starknet::secp256_trait::is_valid_signature` (P-256, raw)                    |
+| `WEBAUTHN_P256`      | `WebAuthnP256Verifier`       | `is_valid_signature<Secp256r1Point>` over `sha256(authData ‖ sha256(clientData))` with on-chain `webauthn.get` type + base64url challenge binding |
+| `EIP191_SECP256K1`   | `EIP191Secp256k1Verifier`    | `recover_public_key` over `keccak256("\x19Ethereum Signed Message:\n32" ‖ msg)` — accepts MetaMask `personal_sign` directly |
 
 Cross-language fixtures (`@noble/ed25519`, `ethers.js`, `@noble/curves`) sign one canonical SNIP-12 hash across all four curves so the audit surface is "one hash, four verifiers, one envelope shape."
 
@@ -314,9 +316,10 @@ Verification evidence on commit `6c30576`:
 
 - **`scarb build`** — green under Scarb 2.14, Cairo 2.14, Sierra 1.7
 - **`scarb fmt --check`** — clean
-- **`snforge test`** — 104 passed, 0 failed, 5 ignored (ignored reasons documented in source; no unfixed findings)
-- **Mutation testing** (`scripts/mutation-test.sh`) — 8 of 10 mutants killed by the suite; 2 documented gaps covered by a Phase 11 STARK-signed fixture (nonce replay) and a deploy-hint panic (snforge `#[should_panic]` capture limitation). The harness exits 0 under these documented constraints.
-- **Fuzz testing** — 7 `#[fuzzer]` tests × 256 runs = 1792 random sweeps across authorization, timelock, and M-3 bounds.
+- **`snforge test`** — 171 passed, 0 failed, 0 ignored
+- **Mutation testing** (`scripts/mutation-test.sh`) — 10 of 10 mutants killed; no documented gaps
+- **Fuzz testing** — 7 `#[fuzzer]` tests × 256 runs = 1792 random sweeps across authorization, timelock, and M-3 bounds
+- **Mainnet declared** — six classes (`ShhhAccount`, `StarkVerifier`, `Ed25519Verifier`, `Secp256k1Verifier`, `P256Verifier`, `WebAuthnP256Verifier`) declared on Starknet mainnet on 2026-04-28; class hashes match the deterministic predictions byte-for-byte. `EIP191Secp256k1Verifier` ships as a follow-up class
 
 The V8 codebase incorporates the twelve findings from the [2026-04-20 Codex/Cairo audit](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e) as regression tests. Each audit finding has a dedicated `test_*` that fires the guard on real contract code — the audit history is reviewable in the commit log (Phase 0 → Phase 10).
 
