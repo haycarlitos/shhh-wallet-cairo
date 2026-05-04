@@ -13,14 +13,15 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Production classes (V8)
 
-| Contract               | Class hash                                                                  | Role                                                     |
-|------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount`          | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8 account — dispatcher + multi-owner + timelock + recovery + sessions migration |
-| `StarkVerifier`        | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | STARK-curve owner signer                                 |
-| `Ed25519Verifier`      | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
-| `Secp256k1Verifier`    | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | secp256k1 owner signer (MetaMask / EVM wallets)          |
-| `P256Verifier`         | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
-| `WebAuthnP256Verifier` | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
+| Contract                  | Class hash                                                                  | Role                                                     |
+|---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
+| `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8 account — dispatcher + multi-owner + timelock + recovery + sessions migration |
+| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | STARK-curve owner signer                                 |
+| `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
+| `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 owner signer (programmatic / hardware)     |
+| `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`        | EIP-191 `personal_sign` — MetaMask, Rabby, every EVM wallet |
+| `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
+| `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
 
 ## Legacy (V7, pre-patch — already on mainnet)
 
@@ -31,9 +32,11 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**All six V8 classes are declared on Starknet mainnet** (2026-04-28).
+**Seven V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+(initial V8 set), `EIP191Secp256k1Verifier` followed on 2026-05-05 to
+unlock MetaMask `personal_sign` integration.
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 92.155 STRK ($3.53 at 2026-04-28 prices).
+Total declare cost: 98.69 STRK across the seven classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class

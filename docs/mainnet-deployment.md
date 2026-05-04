@@ -1,19 +1,21 @@
-# V8 Mainnet Deployment — 2026-04-28
+# V8 Mainnet Deployment
 
-V8 ShhhAccount is **declared on Starknet mainnet**. This document records
-what was deployed, what it cost, and what each user-facing operation
-will cost going forward.
+V8 ShhhAccount is **declared on Starknet mainnet**. Initial 6 classes
+landed 2026-04-28; `EIP191Secp256k1Verifier` (MetaMask `personal_sign`)
+followed 2026-05-05. This document records what was deployed, what it
+cost, and what each user-facing operation will cost going forward.
 
 ## Class hashes (live on mainnet)
 
-| Contract               | Class hash                                                           | Voyager                                                                     |
-|------------------------|----------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `ShhhAccount`          | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3` | [link](https://voyager.online/class/0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3) |
-| `StarkVerifier`        | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b` | [link](https://voyager.online/class/0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b) |
-| `Ed25519Verifier`      | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774` | [link](https://voyager.online/class/0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774) |
-| `Secp256k1Verifier`    | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6` | [link](https://voyager.online/class/0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6) |
-| `P256Verifier`         | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810` | [link](https://voyager.online/class/0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810) |
-| `WebAuthnP256Verifier` | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4` | [link](https://voyager.online/class/0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4) |
+| Contract                  | Class hash                                                           | Voyager                                                                     |
+|---------------------------|----------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3` | [link](https://voyager.online/class/0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3) |
+| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b` | [link](https://voyager.online/class/0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b) |
+| `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774` | [link](https://voyager.online/class/0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774) |
+| `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6` | [link](https://voyager.online/class/0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6) |
+| `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f` | [link](https://voyager.online/class/0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f) |
+| `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810` | [link](https://voyager.online/class/0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810) |
+| `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4` | [link](https://voyager.online/class/0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4) |
 
 Declared by: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`
 
@@ -21,15 +23,16 @@ Declared by: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`
 
 STRK price reference: $0.038 / STRK (2026-04-28)
 
-| Class                  | Sierra size | Tx hash                                                                | Fee paid    | USD     |
-|------------------------|------------:|------------------------------------------------------------------------|------------:|--------:|
-| StarkVerifier          | 20 KB       | `0x2ba4610399325a32f12cfb33d3f20db2ecb7b696bbef0514fa8275310c7fc1a`     | 1.3622 STRK | $0.052  |
-| P256Verifier           | 36 KB       | `0x7f2696cbe4d9835f4521fe25ef06fbade74ee2641d3dce23a225eff8355ce25`     | 2.9748 STRK | $0.114  |
-| Secp256k1Verifier      | 40 KB       | `0x75690c0dd6203500e50461a5daa95e96998bd5662ec4b96f97f460f2c72407d`     | 3.1808 STRK | $0.122  |
-| WebAuthnP256Verifier   | 195 KB      | `0x126d8639de99ef821b0091a97f392e2f1234dbd7c4d0b58e3385cbdc3d12c62`     | 11.9532 STRK| $0.458  |
-| Ed25519Verifier        | 543 KB      | `0x3c636c48f5f40cac5a5b38a8137d162c8826f17acd8dd5c73628dac9ff63aa0`     | 31.6190 STRK| $1.213  |
-| ShhhAccount            | 831 KB      | `0x718b07da74315f9a418df8b32fb974deb584cf47296e28bb4c28a5554b0e64`      | 41.0650 STRK| $1.575  |
-| **Total**              |             |                                                                        | **92.155 STRK** | **$3.534** |
+| Class                     | Sierra size | Tx hash                                                                | Fee paid    | USD     |
+|---------------------------|------------:|------------------------------------------------------------------------|------------:|--------:|
+| StarkVerifier             | 20 KB       | `0x2ba4610399325a32f12cfb33d3f20db2ecb7b696bbef0514fa8275310c7fc1a`     | 1.3622 STRK | $0.052  |
+| P256Verifier              | 36 KB       | `0x7f2696cbe4d9835f4521fe25ef06fbade74ee2641d3dce23a225eff8355ce25`     | 2.9748 STRK | $0.114  |
+| Secp256k1Verifier         | 40 KB       | `0x75690c0dd6203500e50461a5daa95e96998bd5662ec4b96f97f460f2c72407d`     | 3.1808 STRK | $0.122  |
+| EIP191Secp256k1Verifier   | 97 KB       | `0x5e702a47debde19e7b913a1cabdf469888a8332b4f731ed4cf1f34507ce7683`     | 6.5362 STRK | $0.250  |
+| WebAuthnP256Verifier      | 195 KB      | `0x126d8639de99ef821b0091a97f392e2f1234dbd7c4d0b58e3385cbdc3d12c62`     | 11.9532 STRK| $0.458  |
+| Ed25519Verifier           | 543 KB      | `0x3c636c48f5f40cac5a5b38a8137d162c8826f17acd8dd5c73628dac9ff63aa0`     | 31.6190 STRK| $1.213  |
+| ShhhAccount               | 831 KB      | `0x718b07da74315f9a418df8b32fb974deb584cf47296e28bb4c28a5554b0e64`      | 41.0650 STRK| $1.575  |
+| **Total**                 |             |                                                                        | **98.692 STRK** | **$3.784** |
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.
@@ -49,14 +52,15 @@ order of magnitude; mileage varies with `l2_gas_price` at the time.
 
 ### Per transaction (typical user activity)
 
-| Curve                | l2_gas (snforge) | STRK (est.) | USD (est.) | Wallets that use this kind |
-|----------------------|-----------------:|------------:|-----------:|----------------------------|
-| STARK ECDSA          | ~12 M            | ~0.38       | ~$0.014    | Argent, Braavos, native Starknet |
-| Ed25519 (Garaga)     | ~28 M            | ~0.89       | ~$0.034    | Phantom, Solflare, every Solana wallet |
-| secp256k1 (recovery) | ~15 M            | ~0.47       | ~$0.018    | MetaMask, every EVM wallet |
-| P-256 (raw)          | ~13 M            | ~0.41       | ~$0.016    | PIV smart cards, eIDAS IDs |
-| WebAuthn P-256       | ~46 M            | ~1.46       | ~$0.056    | Apple passkeys, Touch ID, Face ID, YubiKey |
-| Threshold 2-of-N (STARK + STARK) | ~25 M | ~0.79       | ~$0.030    | DAO multisig, corporate treasury |
+| Curve                     | l2_gas (snforge) | STRK (est.) | USD (est.) | Wallets that use this kind |
+|---------------------------|-----------------:|------------:|-----------:|----------------------------|
+| STARK ECDSA               | ~12 M            | ~0.38       | ~$0.014    | Argent, Braavos, native Starknet |
+| Ed25519 (Garaga)          | ~28 M            | ~0.89       | ~$0.034    | Phantom, Solflare, every Solana wallet |
+| Raw secp256k1 (recovery)  | ~15 M            | ~0.47       | ~$0.018    | Hardware wallets exposing low-level signing |
+| EIP-191 secp256k1         | ~18 M            | ~0.57       | ~$0.022    | MetaMask, Rabby, WalletConnect, every EVM wallet |
+| P-256 (raw)               | ~13 M            | ~0.41       | ~$0.016    | PIV smart cards, eIDAS IDs |
+| WebAuthn P-256            | ~46 M            | ~1.46       | ~$0.056    | Apple passkeys, Touch ID, Face ID, YubiKey |
+| Threshold 2-of-N (STARK)  | ~25 M            | ~0.79       | ~$0.030    | DAO multisig, corporate treasury |
 
 ### Account-management flows (timelocked, multi-step)
 
@@ -99,13 +103,14 @@ if STRK price halves.
 ```
 Pre-declare balance:  17.0164 STRK
 Funded mid-process:  +600.0000 STRK
-Total spent:         -92.1550 STRK (6 declares)
-Final balance:       524.8614 STRK  ($20.10 USD)
+Total spent:         -98.6920 STRK (7 declares)
+Final balance:       504.1457 STRK  ($19.30 USD)
 ```
 
-The 524 STRK leftover sits with the deployer for any future class
+The 504 STRK leftover sits with the deployer for any future class
 declares (e.g. a V8.1 if Phase 13/14 audits surface a finding requiring
-a redeploy, or new verifier kinds added per the SNIP roadmap).
+a redeploy, or new verifier kinds added per the roadmap such as
+`EIP712Secp256k1Verifier` or BLS).
 
 ## Sources of variance
 
