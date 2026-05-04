@@ -1,120 +1,136 @@
 # Shhh Wallet — Cairo
 
-> **Status:** Active work on V8 (branch `v8-robust`). V7 is production on mainnet class hash `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13` and remains the reference for the current Phantom-only wallet. V8 generalizes it into a multi-signer, multi-curve, recoverable account and is the reference implementation for a proposed pluggable-signer SNIP.
+> **Status:** V8 is **live on Starknet mainnet**. 8 classes declared (initial 6 on 2026-04-28, plus EIP-191 + EIP-712 secp256k1 verifiers on 2026-05-05). V7 stays on mainnet for legacy users; V8 is the redeploy target for new accounts.
+
+Pluggable-signer Starknet smart account: one account class that verifies signatures from MetaMask, Phantom, Apple passkey, native Starknet wallets, and any future curve via separately-declared verifier classes. Cross-ecosystem recovery, multi-owner threshold, timelocked governance, session keys with spending caps.
 
 ## Versions
 
-| Version | Branch | Scope | Production? |
-|---------|--------|-------|-------------|
-| V7      | `main` | Phantom-only (Ed25519) self-custodial wallet, SNIP-9 V2, Garaga Ed25519 | ✅ Mainnet |
-| V8      | `v8-robust` | Multi-signer (Ed25519 / secp256k1 / P-256 / WebAuthn / STARK), session keys, social recovery, all fixes for the 2026-04-20 audit | 🚧 In progress |
+| Version | Branch       | Status                | Class hash                                                                  |
+|---------|--------------|-----------------------|-----------------------------------------------------------------------------|
+| V7      | `main`       | ✅ Mainnet (legacy)   | `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13`         |
+| V8      | `v8-robust`  | ✅ Mainnet (current)  | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`         |
 
-## V8 — What's new
+## V8 mainnet classes
 
-V8 is a single account class that verifies signatures from any major wallet or device through a pluggable-verifier architecture. One address per user for life. Signers can be added, rotated, or recovered without migrating the account.
+Pin these in your SDK constants. Full deploy record (tx hashes, fees, Voyager links) in [`docs/mainnet-deployment.md`](./docs/mainnet-deployment.md).
 
-Core capabilities:
+| Contract                  | Class hash                                                                  | Wallets / use case                                       |
+|---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
+| `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | The account contract                                     |
+| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | Argent, Braavos, Ledger Starknet app                     |
+| `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Phantom, Solflare, every Solana wallet                   |
+| `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 (programmatic / hardware)                  |
+| `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`        | MetaMask `personal_sign`, Rabby, every EVM wallet        |
+| `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | MetaMask `eth_signTypedData_v4` structured popup         |
+| `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | PIV smart cards, eIDAS, Apple DeviceCheck                |
+| `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Apple passkeys, Touch ID, Face ID, YubiKey FIDO2         |
 
-- **One class hash, any curve.** Verifier components (Ed25519, secp256k1, WebAuthn P-256, STARK) are separately declared classes; the account dispatches to the right one via `library_call_syscall`. New curves land later by ratifying a new class hash into the account's verifier registry — no account redeployment.
-- **Multi-signer per account.** Weighted owner set with a threshold, `add/remove/rotate_owner` through timelocked governance.
-- **Social recovery.** Guardian-initiated with a 7-day timelock, single-owner cancel during the window.
-- **Session keys + spending policies** ported from [starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163) (merged 2026-03-03, `SNIPS/snip-x.md`).
-- **SNIP-9 V2 compliance via SNIP-12 typed data.** Fixes audit H-2 at the spec level.
-- **Atomic multicall, bounded inputs, caller-gated `__execute__`.** Closes every remaining audit finding.
-- **Immutable.** No `UpgradeableComponent`. Changes happen via recovery or redeploy, never in-place.
+## What V8 does
 
-## Audit response + SNIP proposal
+- **One class hash, any curve.** Owner key can be on any of the seven supported curves (Ed25519, secp256k1 raw / EIP-191 / EIP-712, P-256 raw / WebAuthn, STARK). Adding a new curve means declaring a new verifier class and registering it on the account — no account redeployment.
+- **Multi-owner with weighted threshold.** Each owner has a kind, weight, role (OWNER / GUARDIAN / RECOVERY_ONLY), and label. `add_owner` / `remove_owner` / `rotate_owner_pubkey` / `set_threshold` go through a timelocked propose/execute/cancel flow.
+- **Threshold-signature envelopes.** N-of-M owners can sign a single OE; the account verifies each inner envelope, rejects duplicate owner_ids, and requires `sum(weights) >= threshold`.
+- **Cross-ecosystem recovery.** Guardian-initiated 7-day recovery with single-owner cancel window. A guardian can be any wallet from any ecosystem (laptop MetaMask, watch passkey, family member's Phantom). Additive: existing owners stay.
+- **Session keys + spending policies** ported from [SNIP #163](https://github.com/starknet-io/SNIPs/pull/163), with a V8-specific blocklist on 17 admin selectors.
+- **Sessions-wallet migration.** Existing `chipi-pay/sessions-smart-contract` users upgrade with one atomic call: `upgrade(V8_class_hash) + bootstrap_from_sessions(...)`.
+- **SNIP-9 V2 compliance via SNIP-12 typed data.** Closes audit H-2.
+- **Audit-trail-tested.** All 12 findings from Omar Espejel's 2026-04-20 audit + all 3 from Henri's 2026-04-13 AuditAgent scan have named regression tests. Two additional self-audit fixes (WebAuthn type-binding, reentrancy guard).
 
-This branch is the combined response to:
+## Audience-by-audience: what this unlocks
 
-1. The [2026-04-20 Codex/Cairo security audit](./docs/audit-response-omar.md) (Omar Espejel). Every finding — C-1 / H-1 / H-2 / M-1..4 / L-1 / I-1..3 — is addressed and tracked by a dedicated regression file in [`tests/audit_2026_04_20/`](./tests/audit_2026_04_20/).
-2. A proposed SNIP for pluggable signers on Starknet smart accounts: [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md). V8 is the reference implementation. The SNIP layers on top of the already-merged Session Keys SNIP — authorization (session keys) was standardized by #163; this SNIP standardizes authentication (which curve the owner key is on and how to verify it). Together the two SNIPs cover roughly 99% of the signing surface area humans use in 2026 (MetaMask, Phantom, passkeys, Google / Apple OAuth, YubiKey, validator keys).
+See [`docs/ecosystem-impact.md`](./docs/ecosystem-impact.md) for concrete UX flows, dev-integration shortcuts, and ecosystem benefits. Headline:
 
-### Audit-finding → regression-test map
+- Phantom, MetaMask, Apple passkey users sign Starknet txs in their existing wallet popup with no install.
+- One paymaster integration sponsors all wallet kinds because the curve check happens on chain.
+- Free CCTP USDC migration from Solana / Ethereum into a V8 wallet (combined with the dev's source-chain relayer).
+- AI-agent UX via session keys + per-token spending caps + auto-expiry.
+- MPC-grade multi-device security without MPC infrastructure.
 
-| ID  | Finding                                                       | Test file                                                  |
-|-----|---------------------------------------------------------------|------------------------------------------------------------|
-| C-1 | Public `__execute__` allowed unsigned calls                    | [`c1_execute_caller_check.cairo`](./tests/audit_2026_04_20/c1_execute_caller_check.cairo) |
-| H-1 | Silent subcall failures                                        | [`h1_atomic_multicall.cairo`](./tests/audit_2026_04_20/h1_atomic_multicall.cairo) |
-| H-2 | SNIP-9 V2 interface ID / semantics mismatch                    | [`h2_snip9_interface_id.cairo`](./tests/audit_2026_04_20/h2_snip9_interface_id.cairo) |
-| M-1 | `caller == 0` accepted as unrestricted                         | [`m1_any_caller_sentinel.cairo`](./tests/audit_2026_04_20/m1_any_caller_sentinel.cairo) |
-| M-2 | No validity-window cap                                         | [`m2_validity_window_cap.cairo`](./tests/audit_2026_04_20/m2_validity_window_cap.cairo) |
-| M-3 | Unbounded calls / calldata / signature                         | [`m3_bounds_calls_calldata_sig.cairo`](./tests/audit_2026_04_20/m3_bounds_calls_calldata_sig.cairo) |
-| M-4 | Signature envelope + trailing-data gaps                        | [`m4_signature_envelope_bounds.cairo`](./tests/audit_2026_04_20/m4_signature_envelope_bounds.cairo) |
-| L-1 | Out-of-range pubkey halves accepted in constructor             | [`l1_pubkey_range_check.cairo`](./tests/audit_2026_04_20/l1_pubkey_range_check.cairo) |
-| I-1 | Custom calls hash replaced by SNIP-12 typed data               | [`i1_custom_hash_removed.cairo`](./tests/audit_2026_04_20/i1_custom_hash_removed.cairo) |
-| I-2 | Missing Ed25519 negative vectors                               | [`i2_ed25519_negative_vectors.cairo`](./tests/audit_2026_04_20/i2_ed25519_negative_vectors.cairo) |
-| I-3 | Unused `UpgradeableComponent` removed                           | [`i3_no_upgradeable_component.cairo`](./tests/audit_2026_04_20/i3_no_upgradeable_component.cairo) |
-| —   | `snforge_std` pinned to v0.56.0                                 | [`toolchain_snforge_pinned.cairo`](./tests/audit_2026_04_20/toolchain_snforge_pinned.cairo) |
+## Audit + response
 
-CI runs `snforge test --filter audit_2026_04_20` as a dedicated gate.
+- [2026-04-13 Henri / Nethermind AuditAgent scan](./audits/2026-04-13-henri-nethermind-auditagent-scan.pdf) — 3 findings (High / Medium / Info). [Response letter](./docs/audit-response-henri.md).
+- [2026-04-20 Omar Espejel Codex/Cairo audit](./audits/2026-04-20-omar-espejel-codex-audit.md) — 12 findings (Critical / High×2 / Medium×4 / Low / Info×3). [Response letter](./docs/audit-response-omar.md).
 
-## Architecture (V8)
+Both reports archived in [`audits/`](./audits/) with the chronology + Nethermind-license boundary noted in `audits/README.md`.
+
+Phase 13 + 14 independent audits are post-launch hardening (not pre-launch gating) per the maintainer's go-to-mainnet decision.
+
+## Architecture
 
 ```
                           ┌──────────────────────────────────┐
                           │       ShhhAccount (1 class)      │
                           │                                  │
                           │   owners, verifier_classes,      │
-                          │   governance, recovery, sessions │
+                          │   governance, recovery,          │
+                          │   sessions + spending_policy     │
                           └─────────────────┬────────────────┘
                                             │  library_call_syscall
-          ┌─────────────┬────────────┬──────┴──────┬────────────┐
-          ▼             ▼            ▼             ▼            ▼
-     ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌───────┐   (future kinds:
-     │Ed25519  │  │Secp256k1 │  │WebAuthn  │  │STARK  │    RSA, BLS,
-     │verifier │  │verifier  │  │P256 ver. │  │ver.   │    ZK_JWT, ...)
-     │ class   │  │ class    │  │ class    │  │ class │
-     └─────────┘  └──────────┘  └──────────┘  └───────┘
+   ┌──────────┬──────────┬──────────┬───────┴────┬──────────┬──────────┬──────────┐
+   ▼          ▼          ▼          ▼            ▼          ▼          ▼          ▼
+┌──────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ ┌──────┐ ┌──────────┐
+│STARK │ │Ed25519  │ │Secp256k1 │ │EIP-191   │ │EIP-712 │ │ P256 │ │WebAuthn  │
+│ ver. │ │ ver.    │ │ ver.     │ │ ver.     │ │ ver.   │ │ ver. │ │ P256 ver.│
+└──────┘ └─────────┘ └──────────┘ └──────────┘ └────────┘ └──────┘ └──────────┘
 ```
 
 Source layout:
 
 ```
 src/
-├── lib.cairo                       # module tree for V7 + V8
-├── account.cairo                   # V8 main contract skeleton
+├── lib.cairo                       # module tree
+├── account.cairo                   # V8 main account contract
 ├── signer/
 │   ├── interface.cairo             # ISigner trait + kind-tag registry
+│   ├── stark/verifier.cairo
 │   ├── ed25519/verifier.cairo
 │   ├── secp256k1/verifier.cairo
-│   ├── webauthn_p256/verifier.cairo
-│   └── stark/verifier.cairo
-├── owner_set/                      # multi-signer storage + invariants
-├── governance/                     # timelocked pending-ops engine
-├── recovery/                       # guardian + 7d recovery window
-├── session_key/                    # ported from chipi-pay/sessions-smart-contract
-├── spending_policy/                # ported from chipi-pay/sessions-smart-contract
-│
+│   ├── eip191_secp256k1/verifier.cairo
+│   ├── eip712_secp256k1/verifier.cairo
+│   ├── p256/verifier.cairo
+│   └── webauthn_p256/verifier.cairo
+├── owner_set/                      # multi-owner storage + invariants
+├── governance/                     # timelocked propose/execute/cancel
+├── recovery/                       # guardian + 7d recovery
+├── session_key/                    # ported from SNIP #163
+├── spending_policy/                # ported from SNIP #163
+├── migration/                      # bootstrap_from_sessions
 ├── wallet.cairo                    # V7 retained for reference
-├── outside_execution.cairo         # V7 retained for reference
-└── ed25519/                        # V7 retained for reference
+├── outside_execution.cairo         # OE encoding + SNIP-12 hash
+└── ed25519/                        # V7 Ed25519 retained for reference
 
 tests/
-├── audit_2026_04_20/               # one regression file per audit finding
-├── signer/                         # per-verifier-class tests (valid + negative)
-├── owner_set/                      # owner-set invariant + threshold tests
-├── recovery/                       # recovery state-machine tests
-└── test_contract.cairo             # V7 suite (9/9 passing)
+├── audit_2026_04_20.cairo          # regressions for Omar's 12 findings
+├── audit_v8.cairo                  # V8-specific structural regressions
+├── account_*.cairo                 # phase-by-phase account tests
+├── signer_*.cairo                  # per-verifier-class tests
+├── interface_ids.cairo             # SRC-5 + Cairo↔TS parity
+├── edge_cases.cairo                # boundary conditions
+└── fuzz_*.cairo                    # 1,792 random sweeps
 ```
-
-## Docs
-
-- [`docs/shhh-v8-robust-plan.md`](./docs/shhh-v8-robust-plan.md) — build plan, 12-week milestones, security model.
-- [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md) — SNIP draft, ready to open against `starknet-io/SNIPs`.
-- [`docs/audit-response-omar.md`](./docs/audit-response-omar.md) — letter to Omar documenting every finding's disposition.
-- [`docs/shhh-v8-design.md`](./docs/shhh-v8-design.md) — earlier phased-V8 design, superseded by the robust plan but kept for context.
 
 ## Build & test
 
 ```bash
-scarb build                               # compiles V7 + V8 skeleton
-scarb fmt --check
-snforge test                              # V7 suite + V8 stubs
-snforge test --filter audit_2026_04_20    # audit regressions only
+scarb --version          # 2.14.0
+snforge --version        # 0.59.0
+
+scarb build              # compiles V7 + V8
+scarb fmt --check        # format gate
+snforge test             # 184 passed, 0 failed, 0 ignored
+
+bash scripts/mutation-test.sh   # 10/10 mutants killed, no documented gaps
+node scripts/ts/check-interface-ids.mjs   # Cairo ↔ TS ↔ starknet_keccak parity
 ```
 
-V8 is currently a skeleton: the ISigner trait, owner-set, governance, recovery, session-key, and spending-policy components compile; the four verifier classes and the main account's `execute_from_outside_v2` body are TODO-tagged for implementation. See `docs/shhh-v8-robust-plan.md` §9 for the week-by-week implementation track.
+## Docs
+
+- [`docs/ecosystem-impact.md`](./docs/ecosystem-impact.md) — what V8 unlocks for users / devs / Starknet ecosystem.
+- [`docs/class-hashes.md`](./docs/class-hashes.md) — declared class hashes + reproduction commands.
+- [`docs/mainnet-deployment.md`](./docs/mainnet-deployment.md) — per-tx fees, per-user-operation cost map, Cifra projection.
+- [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md) — pluggable-signer SNIP draft, V8 as reference implementation.
+- [`docs/audit-response-omar.md`](./docs/audit-response-omar.md) and [`docs/audit-response-henri.md`](./docs/audit-response-henri.md) — per-auditor response letters.
 
 ## License
 
