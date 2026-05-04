@@ -45,6 +45,9 @@ pub mod signer {
     pub mod eip191_secp256k1 {
         pub mod verifier;
     }
+    pub mod eip712_secp256k1 {
+        pub mod verifier;
+    }
 }
 
 // ----- Multi-owner storage (Phase 4) -----

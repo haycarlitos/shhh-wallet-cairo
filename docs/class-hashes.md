@@ -20,6 +20,7 @@ For declare-tx hashes, fees, and per-user cost estimates see
 | `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
 | `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 owner signer (programmatic / hardware)     |
 | `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`        | EIP-191 `personal_sign` — MetaMask, Rabby, every EVM wallet |
+| `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | EIP-712 typed-data — MetaMask `eth_signTypedData_v4` structured popup |
 | `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
 
@@ -32,11 +33,12 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**Seven V8 classes declared on Starknet mainnet.** Six on 2026-04-28
-(initial V8 set), `EIP191Secp256k1Verifier` followed on 2026-05-05 to
-unlock MetaMask `personal_sign` integration.
+**Eight V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+(initial V8 set), `EIP191Secp256k1Verifier` on 2026-05-05 (MetaMask
+`personal_sign`), `EIP712Secp256k1Verifier` on 2026-05-05 (MetaMask
+`eth_signTypedData_v4` structured-data popup).
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 98.69 STRK across the seven classes.
+Total declare cost: 106.27 STRK across the eight classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class

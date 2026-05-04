@@ -22,6 +22,9 @@ hashes in [`class-hashes.md`](./class-hashes.md):
   low-level signing)
 - `EIP191Secp256k1Verifier` — MetaMask, Rabby, Coinbase Wallet,
   Trust, every EVM wallet via `personal_sign`
+- `EIP712Secp256k1Verifier` — same wallets, structured-data popup
+  via `eth_signTypedData_v4` (MetaMask shows named fields like
+  "Domain: Shhh, hash: 0x…" instead of an opaque hex blob)
 - `P256Verifier` — PIV smart cards, eIDAS qualified certificates,
   Apple DeviceCheck
 - `WebAuthnP256Verifier` — Apple passkeys, Touch ID, Face ID,
@@ -139,15 +142,17 @@ broadly:
 
 These are reserved kind tags or planned follow-ups, not built:
 
-- **EIP-712 typed-data secp256k1** — MetaMask's structured-data popup
-  with field-by-field display. Reserved as `'EIP712_SECP256K1'`. ~1
-  day of work, same template as `EIP191Secp256k1Verifier`.
-- **DKIM-RSA, JWT-RS256, JWT-ES256** — email and OAuth based signers
-  ("Sign in with Google" provisioning a Starknet account). Reserved
-  kind tags; verifier classes are research-stage.
-- **BLS12-381** — validator-key signing. Reserved kind tag; not built.
-- **ZK-wrapped variants** (TOTP, JWT, email under ZK proof) — research
-  stage, reserved kind tags only.
+- **JWT-ES256** — "Sign in with Apple". Apple signs JWTs with P-256,
+  which we already verify on chain. Mostly JWT parsing + Apple-key
+  registry to add. ~1 week.
+- **BLS12-381** — validator-key signing. Garaga has the pairing
+  primitives; mostly wiring. ~1 week.
+- **DKIM-RSA, JWT-RS256** — email and Google-OAuth based signers
+  ("Sign in with Google" provisioning a Starknet account). Path is
+  via zk-email / zk-jwt circuits + an on-chain SNARK verifier.
+  Reserved kind tags; ~3-6 weeks per kind.
+- **ZK-wrapped variants** (TOTP, JWT, email, TLS under ZK proof) —
+  research stage, reserved kind tags only.
 
 ## Cost reality check
 
