@@ -23,6 +23,7 @@ For declare-tx hashes, fees, and per-user cost estimates see
 | `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | EIP-712 typed-data — MetaMask `eth_signTypedData_v4` structured popup |
 | `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
+| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — Apple-issued ES256 JWTs           |
 
 ## Legacy (V7, pre-patch — already on mainnet)
 
@@ -33,12 +34,12 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**Eight V8 classes declared on Starknet mainnet.** Six on 2026-04-28
-(initial V8 set), `EIP191Secp256k1Verifier` on 2026-05-05 (MetaMask
-`personal_sign`), `EIP712Secp256k1Verifier` on 2026-05-05 (MetaMask
-`eth_signTypedData_v4` structured-data popup).
+**Nine V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+(initial V8 set), `EIP191Secp256k1Verifier` and `EIP712Secp256k1Verifier`
+on 2026-05-05 (MetaMask `personal_sign` and `eth_signTypedData_v4`),
+`JwtES256AppleVerifier` on 2026-05-05 ("Sign in with Apple").
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 106.27 STRK across the eight classes.
+Total declare cost: 120.10 STRK across the nine classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class

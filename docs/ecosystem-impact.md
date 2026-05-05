@@ -25,6 +25,9 @@ hashes in [`class-hashes.md`](./class-hashes.md):
 - `EIP712Secp256k1Verifier` — same wallets, structured-data popup
   via `eth_signTypedData_v4` (MetaMask shows named fields like
   "Domain: Shhh, hash: 0x…" instead of an opaque hex blob)
+- `JwtES256AppleVerifier` — "Sign in with Apple". Accepts an RFC 7515
+  JWT signed by Apple with ECDSA P-256, full verification on chain
+  (signature + nonce binding + hardcoded `appleid.apple.com` issuer)
 - `P256Verifier` — PIV smart cards, eIDAS qualified certificates,
   Apple DeviceCheck
 - `WebAuthnP256Verifier` — Apple passkeys, Touch ID, Face ID,
@@ -142,15 +145,16 @@ broadly:
 
 These are reserved kind tags or planned follow-ups, not built:
 
-- **JWT-ES256** — "Sign in with Apple". Apple signs JWTs with P-256,
-  which we already verify on chain. Mostly JWT parsing + Apple-key
-  registry to add. ~1 week.
 - **BLS12-381** — validator-key signing. Garaga has the pairing
-  primitives; mostly wiring. ~1 week.
-- **DKIM-RSA, JWT-RS256** — email and Google-OAuth based signers
-  ("Sign in with Google" provisioning a Starknet account). Path is
-  via zk-email / zk-jwt circuits + an on-chain SNARK verifier.
-  Reserved kind tags; ~3-6 weeks per kind.
+  primitives but no out-of-the-box BLS signature verifier. Building
+  one safely (correct hash-to-curve G2 for Eth-validator-style sigs,
+  IETF ciphersuite compliance) is realistically 1-2 weeks.
+- **JwtES256SubBoundVerifier** — multi-user follow-up to the Apple
+  JWT verifier. Adds a stored identity hash (`poseidon(sub)`) so a
+  shared Apple key authenticates distinct end users. ~1 day.
+- **DKIM-RSA, JWT-RS256** — email and Google-OAuth based signers.
+  Path is via zk-email / zk-jwt circuits + an on-chain SNARK
+  verifier. Reserved kind tags; ~3-6 weeks per kind.
 - **ZK-wrapped variants** (TOTP, JWT, email, TLS under ZK proof) —
   research stage, reserved kind tags only.
 
