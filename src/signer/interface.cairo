@@ -49,6 +49,10 @@ pub const KIND_EIP712_SECP256K1: felt252 = 'EIP712_SECP256K1';
 pub const KIND_DKIM_RSA: felt252 = 'DKIM_RSA';
 pub const KIND_JWT_RS256: felt252 = 'JWT_RS256';
 pub const KIND_JWT_ES256: felt252 = 'JWT_ES256';
+/// Sub-bound variant of JWT_ES256 — verifier additionally checks the
+/// `sub` claim against a stored identity hash, so a single IdP signing
+/// key can authenticate distinct end users on different accounts.
+pub const KIND_JWT_ES256_APPLE_SUB: felt252 = 'JWT_ES256_APPLE_SUB';
 
 // Tier 3 — reserved, verifier circuits in future SNIP amendments
 pub const KIND_MULTISIG_K_OF_N: felt252 = 'MULTISIG_K_OF_N';

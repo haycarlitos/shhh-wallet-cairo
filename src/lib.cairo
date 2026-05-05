@@ -51,6 +51,9 @@ pub mod signer {
     pub mod jwt_es256 {
         pub mod verifier;
     }
+    pub mod jwt_es256_apple_sub {
+        pub mod verifier;
+    }
 }
 
 // ----- Multi-owner storage (Phase 4) -----
