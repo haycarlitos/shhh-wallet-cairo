@@ -1,5 +1,15 @@
 # Upstream Garaga PR: `bls_calldata_builder` for arbitrary BLS messages
 
+> **Status:** **draft PR opened upstream** —
+> [keep-starknet-strange/garaga#519](https://github.com/keep-starknet-strange/garaga/pull/519)
+> closing
+> [issue #518](https://github.com/keep-starknet-strange/garaga/issues/518).
+> Rust core (`bls_calldata_builder` + `precompute_lines_bls12_381`)
+> implemented and passing 57/57 `cargo test` with the pinned 4277-felt
+> end-to-end fixture from `scripts/py/gen_bls_fixture.py`. WASM regen,
+> TypeScript wrapper, Jest, 4 integration suites, and starknet-devnet
+> E2E test are left as documented follow-up scope on the PR body.
+
 > **Goal:** add a generic `bls_calldata_builder` to the Garaga npm
 > bundle so wallet SDKs can build BLS verification calldata for any
 > 32-byte message digest, not only drand round numbers. Removes the
