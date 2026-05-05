@@ -37,6 +37,16 @@ hashes in [`class-hashes.md`](./class-hashes.md):
 - `WebAuthnP256Verifier` — Apple passkeys, Touch ID, Face ID,
   Windows Hello, YubiKey FIDO2
 
+In the same `v8-robust` branch but pending mainnet declare:
+
+- `Bls12_381MinSigVerifier` — BLS12-381 min-sig-size (drand
+  ciphersuite). 48-byte G1 signatures, 96-byte G2 pubkeys.
+  Use cases: validator multi-sig keys, DAO governance keys
+  aggregated via Lagrange interpolation off chain into a single G1
+  signature, backend service signers in throughput-critical paths.
+  Compiled, 9/9 dedicated tests passing on chain via Garaga
+  `hash_to_curve_bls12_381` + `multi_pairing_check_bls12_381_2P_2F`.
+
 ## Audience 1: end users
 
 What kind of wallet UX a Starknet dapp can now offer:
@@ -149,10 +159,12 @@ broadly:
 
 These are reserved kind tags or planned follow-ups, not built:
 
-- **BLS12-381** — validator-key signing. Garaga has the pairing
-  primitives but no out-of-the-box BLS signature verifier. Building
-  one safely (correct hash-to-curve G2 for Eth-validator-style sigs,
-  IETF ciphersuite compliance) is realistically 1-2 weeks.
+- **BLS12-381 min-pubkey-size (Eth-validator style)** — signatures in
+  G2, pubkeys in G1, hash-to-curve to G2. Requires
+  `hash_to_curve_g2_bls12_381` which Garaga hasn't shipped yet (their
+  current bundle only ships hash-to-curve to G1). Once the upstream
+  primitive lands, a follow-up `Bls12_381MinPkVerifier` class drops
+  in alongside the min-sig-size variant we already ship.
 - **DKIM-RSA, JWT-RS256** — email and Google-OAuth based signers.
   Path is via zk-email / zk-jwt circuits + an on-chain SNARK
   verifier. Reserved kind tags; ~3-6 weeks per kind.

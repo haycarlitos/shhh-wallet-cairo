@@ -27,6 +27,7 @@ Pin these in your SDK constants. Full deploy record (tx hashes, fees, Voyager li
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Apple passkeys, Touch ID, Face ID, YubiKey FIDO2         |
 | `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
 | `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, sub-bound) |
+| `Bls12_381MinSigVerifier` | _pending mainnet declare_ — class compiled, 9/9 tests pass on `v8-robust` | BLS12-381 min-sig-size (drand DST) — validator multisigs, DAO keys, backend signers |
 
 ## What V8 does
 
@@ -94,7 +95,8 @@ src/
 │   ├── p256/verifier.cairo
 │   ├── webauthn_p256/verifier.cairo
 │   ├── jwt_es256/verifier.cairo
-│   └── jwt_es256_apple_sub/verifier.cairo
+│   ├── jwt_es256_apple_sub/verifier.cairo
+│   └── bls12_381/verifier.cairo
 ├── owner_set/                      # multi-owner storage + invariants
 ├── governance/                     # timelocked propose/execute/cancel
 ├── recovery/                       # guardian + 7d recovery
@@ -123,7 +125,8 @@ snforge --version        # 0.59.0
 
 scarb build              # compiles V7 + V8
 scarb fmt --check        # format gate
-snforge test             # 202 passed, 0 failed, 0 ignored
+snforge test             # 211 passed, 0 failed, 0 ignored
+python3 scripts/py/gen_bls_fixture.py   # regenerate the BLS fixture
 
 bash scripts/mutation-test.sh   # 10/10 mutants killed, no documented gaps
 node scripts/ts/check-interface-ids.mjs   # Cairo ↔ TS ↔ starknet_keccak parity
