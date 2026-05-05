@@ -23,7 +23,8 @@ For declare-tx hashes, fees, and per-user cost estimates see
 | `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | EIP-712 typed-data — MetaMask `eth_signTypedData_v4` structured popup |
 | `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
-| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — Apple-issued ES256 JWTs           |
+| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
+| `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, many users; sub-bound) |
 
 ## Legacy (V7, pre-patch — already on mainnet)
 
@@ -34,12 +35,14 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**Nine V8 classes declared on Starknet mainnet.** Six on 2026-04-28
-(initial V8 set), `EIP191Secp256k1Verifier` and `EIP712Secp256k1Verifier`
-on 2026-05-05 (MetaMask `personal_sign` and `eth_signTypedData_v4`),
-`JwtES256AppleVerifier` on 2026-05-05 ("Sign in with Apple").
+**Ten V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+(initial V8 set); on 2026-05-05: `EIP191Secp256k1Verifier`,
+`EIP712Secp256k1Verifier` (MetaMask `personal_sign` and
+`eth_signTypedData_v4`), `JwtES256AppleVerifier` (Sign in with Apple,
+single-tenant), and `JwtES256AppleSubVerifier` (Sign in with Apple,
+multi-tenant with sub binding).
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 120.10 STRK across the nine classes.
+Total declare cost: 134.88 STRK across the ten classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class

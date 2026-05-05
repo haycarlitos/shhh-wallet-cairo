@@ -27,7 +27,11 @@ hashes in [`class-hashes.md`](./class-hashes.md):
   "Domain: Shhh, hash: 0x…" instead of an opaque hex blob)
 - `JwtES256AppleVerifier` — "Sign in with Apple". Accepts an RFC 7515
   JWT signed by Apple with ECDSA P-256, full verification on chain
-  (signature + nonce binding + hardcoded `appleid.apple.com` issuer)
+  (signature + nonce binding + hardcoded `appleid.apple.com` issuer).
+  Single-tenant: each owner registers their own Apple key.
+- `JwtES256AppleSubVerifier` — multi-tenant variant. Same recipe plus
+  a `poseidon(sub)` identity binding so a wallet provider can use
+  one Apple signing key across many user accounts safely.
 - `P256Verifier` — PIV smart cards, eIDAS qualified certificates,
   Apple DeviceCheck
 - `WebAuthnP256Verifier` — Apple passkeys, Touch ID, Face ID,
@@ -149,9 +153,6 @@ These are reserved kind tags or planned follow-ups, not built:
   primitives but no out-of-the-box BLS signature verifier. Building
   one safely (correct hash-to-curve G2 for Eth-validator-style sigs,
   IETF ciphersuite compliance) is realistically 1-2 weeks.
-- **JwtES256SubBoundVerifier** — multi-user follow-up to the Apple
-  JWT verifier. Adds a stored identity hash (`poseidon(sub)`) so a
-  shared Apple key authenticates distinct end users. ~1 day.
 - **DKIM-RSA, JWT-RS256** — email and Google-OAuth based signers.
   Path is via zk-email / zk-jwt circuits + an on-chain SNARK
   verifier. Reserved kind tags; ~3-6 weeks per kind.

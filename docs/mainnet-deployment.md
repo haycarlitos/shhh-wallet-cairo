@@ -1,12 +1,13 @@
 # V8 Mainnet Deployment
 
 V8 ShhhAccount is **declared on Starknet mainnet**. Initial 6 classes
-landed 2026-04-28; three additional verifiers followed on 2026-05-05:
+landed 2026-04-28; four additional verifiers followed on 2026-05-05:
 `EIP191Secp256k1Verifier` (MetaMask `personal_sign`),
-`EIP712Secp256k1Verifier` (MetaMask `eth_signTypedData_v4`), and
-`JwtES256AppleVerifier` ("Sign in with Apple" / ES256 JWT-based IdPs).
-This document records what was deployed, what it cost, and what each
-user-facing operation will cost going forward.
+`EIP712Secp256k1Verifier` (MetaMask `eth_signTypedData_v4`),
+`JwtES256AppleVerifier` ("Sign in with Apple", single-tenant), and
+`JwtES256AppleSubVerifier` ("Sign in with Apple", multi-tenant with
+sub-claim binding). This document records what was deployed, what it
+cost, and what each user-facing operation will cost going forward.
 
 ## Class hashes (live on mainnet)
 
@@ -21,6 +22,7 @@ user-facing operation will cost going forward.
 | `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810` | [link](https://voyager.online/class/0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810) |
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4` | [link](https://voyager.online/class/0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4) |
 | `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8` | [link](https://voyager.online/class/0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8) |
+| `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316` | [link](https://voyager.online/class/0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316) |
 
 Declared by: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`
 
@@ -39,7 +41,8 @@ STRK price reference: $0.038 / STRK (2026-04-28)
 | Ed25519Verifier           | 543 KB      | `0x3c636c48f5f40cac5a5b38a8137d162c8826f17acd8dd5c73628dac9ff63aa0`     | 31.6190 STRK| $1.213  |
 | ShhhAccount               | 831 KB      | `0x718b07da74315f9a418df8b32fb974deb584cf47296e28bb4c28a5554b0e64`      | 41.0650 STRK| $1.575  |
 | JwtES256AppleVerifier     | 222 KB      | `0x20cc2ef4042f2cb4c80aad1c0cb544fda3d32a2ae7b3f532f33e1eb532e3263`     | 13.8337 STRK| $0.530  |
-| **Total**                 |             |                                                                        | **120.103 STRK** | **$4.604** |
+| JwtES256AppleSubVerifier  | 243 KB      | `0x35cac3d88dca7fc4136af5a285fb38454d0f2a8c5d2659d294c39f12150537e`     | 14.7752 STRK| $0.566  |
+| **Total**                 |             |                                                                        | **134.878 STRK** | **$5.170** |
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.
@@ -66,7 +69,8 @@ order of magnitude; mileage varies with `l2_gas_price` at the time.
 | Raw secp256k1 (recovery)  | ~15 M            | ~0.47       | ~$0.018    | Hardware wallets exposing low-level signing |
 | EIP-191 secp256k1         | ~18 M            | ~0.57       | ~$0.022    | MetaMask, Rabby, WalletConnect (`personal_sign` popup) |
 | EIP-712 secp256k1         | ~19 M            | ~0.60       | ~$0.023    | MetaMask `eth_signTypedData_v4` structured popup |
-| JWT ES256 (Apple)         | ~58 M            | ~1.84       | ~$0.070    | "Sign in with Apple" — full JWT verify on chain |
+| JWT ES256 (Apple)         | ~58 M            | ~1.84       | ~$0.070    | "Sign in with Apple" — single-tenant (Apple key per user) |
+| JWT ES256 sub-bound       | ~59 M            | ~1.87       | ~$0.072    | "Sign in with Apple" — multi-tenant (one Apple key, many users) |
 | P-256 (raw)               | ~13 M            | ~0.41       | ~$0.016    | PIV smart cards, eIDAS IDs |
 | WebAuthn P-256            | ~46 M            | ~1.46       | ~$0.056    | Apple passkeys, Touch ID, Face ID, YubiKey |
 | Threshold 2-of-N (STARK)  | ~25 M            | ~0.79       | ~$0.030    | DAO multisig, corporate treasury |
@@ -112,14 +116,14 @@ if STRK price halves.
 ```
 Pre-declare balance:   17.0164 STRK
 Funded mid-process:   +600.0000 STRK
-Total spent:         -120.1024 STRK (9 declares)
-Final balance:        482.7352 STRK  ($18.50 USD)
+Total spent:         -134.8776 STRK (10 declares)
+Final balance:        467.9600 STRK  ($17.93 USD)
 ```
 
-The 482 STRK leftover sits with the deployer for any future class
+The 467 STRK leftover sits with the deployer for any future class
 declares (e.g. a V8.1 if Phase 13/14 audits surface a finding requiring
 a redeploy, or new verifier kinds added per the roadmap such as BLS,
-zk-email, or a sub-bound JWT variant).
+zk-email, or other ES256-JWT IdP variants like Auth0 / Okta).
 
 ## Sources of variance
 

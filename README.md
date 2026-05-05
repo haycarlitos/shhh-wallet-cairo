@@ -1,6 +1,6 @@
 # Shhh Wallet — Cairo
 
-> **Status:** V8 is **live on Starknet mainnet**. 9 classes declared (initial 6 on 2026-04-28, plus EIP-191 + EIP-712 secp256k1 verifiers + JWT-ES256 Apple Sign-in verifier on 2026-05-05). V7 stays on mainnet for legacy users; V8 is the redeploy target for new accounts.
+> **Status:** V8 is **live on Starknet mainnet**. 10 classes declared (initial 6 on 2026-04-28, plus EIP-191 + EIP-712 secp256k1 verifiers + JWT-ES256 Apple Sign-in (single-tenant + multi-tenant sub-bound) verifiers on 2026-05-05). V7 stays on mainnet for legacy users; V8 is the redeploy target for new accounts.
 
 Pluggable-signer Starknet smart account: one account class that verifies signatures from MetaMask, Phantom, Apple passkey, native Starknet wallets, and any future curve via separately-declared verifier classes. Cross-ecosystem recovery, multi-owner threshold, timelocked governance, session keys with spending caps.
 
@@ -25,7 +25,8 @@ Pin these in your SDK constants. Full deploy record (tx hashes, fees, Voyager li
 | `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | MetaMask `eth_signTypedData_v4` structured popup         |
 | `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | PIV smart cards, eIDAS, Apple DeviceCheck                |
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Apple passkeys, Touch ID, Face ID, YubiKey FIDO2         |
-| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — Apple-issued ES256 JWTs           |
+| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
+| `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, sub-bound) |
 
 ## What V8 does
 
@@ -68,12 +69,13 @@ Phase 13 + 14 independent audits are post-launch hardening (not pre-launch gatin
                           │   sessions + spending_policy     │
                           └─────────────────┬────────────────┘
                                             │  library_call_syscall
-   ┌──────────┬──────────┬──────────┬───────┴────┬──────────┬──────────┬──────────┐
-   ▼          ▼          ▼          ▼            ▼          ▼          ▼          ▼
-┌──────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ ┌──────┐ ┌──────────┐
-│STARK │ │Ed25519  │ │Secp256k1 │ │EIP-191   │ │EIP-712 │ │ P256 │ │WebAuthn  │
-│ ver. │ │ ver.    │ │ ver.     │ │ ver.     │ │ ver.   │ │ ver. │ │ P256 ver.│
-└──────┘ └─────────┘ └──────────┘ └──────────┘ └────────┘ └──────┘ └──────────┘
+   ┌──────┬─────────┬──────────┬──────────┬─┴──────┬──────┬──────────┬─────────┬──────────┐
+   ▼      ▼         ▼          ▼          ▼        ▼      ▼          ▼         ▼          ▼
+┌──────┐┌────────┐┌──────────┐┌────────┐┌────────┐┌────┐┌──────────┐┌────────┐┌──────────┐
+│STARK ││Ed25519 ││Secp256k1 ││EIP-191 ││EIP-712 ││P256││WebAuthn  ││ JWT    ││ JWT      │
+│ ver. ││ ver.   ││ ver.     ││ ver.   ││ ver.   ││ver.││ P256 ver.││ ES256  ││ ES256    │
+│      ││        ││          ││        ││        ││    ││          ││ Apple  ││ Apple-sub│
+└──────┘└────────┘└──────────┘└────────┘└────────┘└────┘└──────────┘└────────┘└──────────┘
 ```
 
 Source layout:
@@ -90,7 +92,9 @@ src/
 │   ├── eip191_secp256k1/verifier.cairo
 │   ├── eip712_secp256k1/verifier.cairo
 │   ├── p256/verifier.cairo
-│   └── webauthn_p256/verifier.cairo
+│   ├── webauthn_p256/verifier.cairo
+│   ├── jwt_es256/verifier.cairo
+│   └── jwt_es256_apple_sub/verifier.cairo
 ├── owner_set/                      # multi-owner storage + invariants
 ├── governance/                     # timelocked propose/execute/cancel
 ├── recovery/                       # guardian + 7d recovery
@@ -119,7 +123,7 @@ snforge --version        # 0.59.0
 
 scarb build              # compiles V7 + V8
 scarb fmt --check        # format gate
-snforge test             # 193 passed, 0 failed, 0 ignored
+snforge test             # 202 passed, 0 failed, 0 ignored
 
 bash scripts/mutation-test.sh   # 10/10 mutants killed, no documented gaps
 node scripts/ts/check-interface-ids.mjs   # Cairo ↔ TS ↔ starknet_keccak parity
