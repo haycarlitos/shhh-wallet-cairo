@@ -6,8 +6,10 @@ landed 2026-04-28; four additional verifiers followed on 2026-05-05:
 `EIP712Secp256k1Verifier` (MetaMask `eth_signTypedData_v4`),
 `JwtES256AppleVerifier` ("Sign in with Apple", single-tenant), and
 `JwtES256AppleSubVerifier` ("Sign in with Apple", multi-tenant with
-sub-claim binding). This document records what was deployed, what it
-cost, and what each user-facing operation will cost going forward.
+sub-claim binding); on 2026-05-06 the `Bls12_381MinSigVerifier`
+(BLS12-381 min-sig-size, drand DST) joined for validator-style
+signers. This document records what was deployed, what it cost, and
+what each user-facing operation will cost going forward.
 
 ## Class hashes (live on mainnet)
 
@@ -23,6 +25,7 @@ cost, and what each user-facing operation will cost going forward.
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4` | [link](https://voyager.online/class/0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4) |
 | `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8` | [link](https://voyager.online/class/0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8) |
 | `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316` | [link](https://voyager.online/class/0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316) |
+| `Bls12_381MinSigVerifier` | `0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d` | [link](https://voyager.online/class/0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d) |
 
 Declared by: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`
 
@@ -42,7 +45,8 @@ STRK price reference: $0.038 / STRK (2026-04-28)
 | ShhhAccount               | 831 KB      | `0x718b07da74315f9a418df8b32fb974deb584cf47296e28bb4c28a5554b0e64`      | 41.0650 STRK| $1.575  |
 | JwtES256AppleVerifier     | 222 KB      | `0x20cc2ef4042f2cb4c80aad1c0cb544fda3d32a2ae7b3f532f33e1eb532e3263`     | 13.8337 STRK| $0.530  |
 | JwtES256AppleSubVerifier  | 243 KB      | `0x35cac3d88dca7fc4136af5a285fb38454d0f2a8c5d2659d294c39f12150537e`     | 14.7752 STRK| $0.566  |
-| **Total**                 |             |                                                                        | **134.878 STRK** | **$5.170** |
+| Bls12_381MinSigVerifier   | 1.7 MB      | `0x129d66c892d7ea36a1c15a902cf673a37e97d33b5c3e6c0f7f6258b712d79d2`     | 59.2020 STRK| $2.270  |
+| **Total**                 |             |                                                                        | **194.080 STRK** | **$7.440** |
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.

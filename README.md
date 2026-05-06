@@ -1,6 +1,6 @@
 # Shhh Wallet — Cairo
 
-> **Status:** V8 is **live on Starknet mainnet**. 10 classes declared (initial 6 on 2026-04-28, plus EIP-191 + EIP-712 secp256k1 verifiers + JWT-ES256 Apple Sign-in (single-tenant + multi-tenant sub-bound) verifiers on 2026-05-05). V7 stays on mainnet for legacy users; V8 is the redeploy target for new accounts.
+> **Status:** V8 is **live on Starknet mainnet**. 11 classes declared (initial 6 on 2026-04-28; EIP-191 + EIP-712 secp256k1 verifiers + JWT-ES256 Apple Sign-in (single-tenant + multi-tenant sub-bound) verifiers on 2026-05-05; BLS12-381 min-sig-size verifier on 2026-05-06). V7 stays on mainnet for legacy users; V8 is the redeploy target for new accounts.
 
 Pluggable-signer Starknet smart account: one account class that verifies signatures from MetaMask, Phantom, Apple passkey, native Starknet wallets, and any future curve via separately-declared verifier classes. Cross-ecosystem recovery, multi-owner threshold, timelocked governance, session keys with spending caps.
 
@@ -27,7 +27,7 @@ Pin these in your SDK constants. Full deploy record (tx hashes, fees, Voyager li
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Apple passkeys, Touch ID, Face ID, YubiKey FIDO2         |
 | `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
 | `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, sub-bound) |
-| `Bls12_381MinSigVerifier` | _pending mainnet declare_ — class compiled, 9/9 tests pass on `v8-robust` | BLS12-381 min-sig-size (drand DST) — validator multisigs, DAO keys, backend signers |
+| `Bls12_381MinSigVerifier` | `0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d`        | BLS12-381 min-sig-size (drand DST) — validator multisigs, DAO keys, backend signers |
 
 ## What V8 does
 

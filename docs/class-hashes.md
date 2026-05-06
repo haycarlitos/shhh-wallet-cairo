@@ -25,6 +25,7 @@ For declare-tx hashes, fees, and per-user cost estimates see
 | `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
 | `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
 | `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, many users; sub-bound) |
+| `Bls12_381MinSigVerifier` | `0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d`        | BLS12-381 min-sig-size (drand DST) — validator multisigs, DAO keys, backend signers |
 
 ## Legacy (V7, pre-patch — already on mainnet)
 
@@ -35,14 +36,15 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**Ten V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+**Eleven V8 classes declared on Starknet mainnet.** Six on 2026-04-28
 (initial V8 set); on 2026-05-05: `EIP191Secp256k1Verifier`,
 `EIP712Secp256k1Verifier` (MetaMask `personal_sign` and
 `eth_signTypedData_v4`), `JwtES256AppleVerifier` (Sign in with Apple,
 single-tenant), and `JwtES256AppleSubVerifier` (Sign in with Apple,
-multi-tenant with sub binding).
+multi-tenant with sub binding); on 2026-05-06:
+`Bls12_381MinSigVerifier` (BLS12-381 min-sig-size, drand DST).
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 134.88 STRK across the ten classes.
+Total declare cost: 194.08 STRK across the eleven classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class
