@@ -326,6 +326,94 @@ fn test_v8_audit_c1_guardian_cannot_sign_oe() {
     src9.execute_from_outside_v2(oe, envelope.span());
 }
 // ============================================================
+// Audit M-3 (2026-05-07 self-review) — V8 mirrors of the V7
+// audit-regression suite. The 2026-04-20 audit was tested against
+// V7 (`ShhhWallet`); mainnet has been declaring V8 (`ShhhAccount`)
+// since 2026-04-28, so the same guards need V8-specific covers.
+//
+//   M-3a: H-2 — canonical SRC9_V2 interface ID is registered on a
+//         freshly-deployed V8 account.
+//   M-3b: I-3 — V8 has no `upgrade` selector; calling it must
+//         revert (entrypoint not found / unimplemented).
+//   M-3c: L-1 — V8 constructor refuses a primary kind of zero.
+//   M-4 (per-verifier trailing-bytes) is regression-tested inside
+//         each verifier's own test suite (e.g.
+//         `tests/signer_jwt_es256.cairo::test_rejects_extra_trailing_bytes`).
+// ============================================================
+
+#[starknet::interface]
+trait ISRC5<TContractState> {
+    fn supports_interface(self: @TContractState, interface_id: felt252) -> bool;
+}
+
+const ISRC9_V2_ID: felt252 = 0x1d1144bb2138366ff28d8e9ab57456b1d332ac42196230c3a602003c89872;
+
+#[test]
+fn test_v8_audit_m3_h2_registers_canonical_snip9_id() {
+    let addr = deploy_account();
+    let src5 = ISRC5Dispatcher { contract_address: addr };
+    assert(src5.supports_interface(ISRC9_V2_ID), 'V8 H2: canonical id missing');
+}
+
+#[starknet::interface]
+trait IMaybeUpgradeable<TContractState> {
+    fn upgrade(ref self: TContractState, new_class_hash: starknet::ClassHash);
+}
+
+#[test]
+#[should_panic]
+fn test_v8_audit_m3_i3_no_upgrade_entrypoint() {
+    // Audit I-3: V8 deliberately ships without an `upgrade` selector
+    // (only the one-shot `bootstrap_from_sessions` migration path
+    // exists). A direct call to `upgrade(...)` MUST revert because
+    // the selector is not exported. snforge's dispatcher panics on
+    // entrypoint-not-found.
+    let addr = deploy_account();
+    let dispatcher = IMaybeUpgradeableDispatcher { contract_address: addr };
+    dispatcher.upgrade(0xdead.try_into().unwrap());
+}
+
+#[test]
+#[should_panic]
+fn test_v8_audit_m3_l1_constructor_rejects_zero_kind() {
+    // Audit L-1 (V7) on V8: deploying with `primary_kind == 0`
+    // would leave the dispatcher unable to resolve the verifier
+    // class for its own primary owner. The constructor's
+    // `'L1: primary_kind is zero'` assertion blocks this.
+    let v = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    let cls = declare("ShhhAccount").unwrap().contract_class();
+    // [primary_kind=0, verifier_class, pubkey_len=1, pubkey, label]
+    let calldata: Array<felt252> = array![0, v.into(), 1, 0xAAAA, 'x'];
+    cls.deploy(@calldata).unwrap();
+}
+
+// ============================================================
+// Audit M-2 (2026-05-07 self-review) — verifier reentrancy guard.
+// A library-call'd verifier MUST NOT be able to recurse into a
+// `_assert_self_call`-gated mutator: with the `inside_verifier`
+// flag held high during `dispatcher.verify(...)`, any self-call to
+// `propose_add_owner` / `set_spending_policy` / `cancel_recovery`
+// reverts with 'SHHH: verifier reentry'.
+//
+// Direct positive test would require a malicious verifier helper
+// class. The flag's effect is observable indirectly: a regular
+// owner-self-call to `propose_set_threshold` (NOT inside a verifier)
+// must still succeed — confirming the flag does not leak into
+// legitimate flows. This complements the negative case which is
+// expressed by inspection of the storage-flag invariant.
+// ============================================================
+
+#[test]
+fn test_v8_audit_m2_self_call_outside_verifier_succeeds() {
+    let addr = deploy_account();
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    start_cheat_block_timestamp_global(1_000_000);
+    start_cheat_caller_address(addr, addr);
+    // Should NOT panic: inside_verifier is false here, so
+    // _assert_self_call passes both checks.
+    let _op_id = gov.propose_set_threshold(0_u32, 1_u8);
+}
+// ============================================================
 // Nonce replay on V8 — handled by the Phase 11 STARK-signed e2e test.
 //
 // Within a single failing tx the nonce write is rolled back with the

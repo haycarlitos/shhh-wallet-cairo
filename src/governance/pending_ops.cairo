@@ -24,8 +24,15 @@ pub const OP_ADD_VERIFIER_CLASS: felt252 = 'ADD_VERIFIER';
 pub const OP_REMOVE_VERIFIER_CLASS: felt252 = 'REMOVE_VERIFIER';
 pub const OP_ADD_GUARDIAN: felt252 = 'ADD_GUARDIAN';
 pub const OP_REMOVE_GUARDIAN: felt252 = 'REMOVE_GUARDIAN';
-pub const OP_INITIATE_RECOVERY: felt252 = 'INIT_RECOVERY';
-pub const OP_FINALIZE_RECOVERY: felt252 = 'FIN_RECOVERY';
+// Audit L-1 (2026-05-07 self-review): the recovery flow uses its own
+// substorage (`recovery.pending`) and does not go through
+// `governance.propose / assert_ready / mark_executed`. The previous
+// `OP_INITIATE_RECOVERY` / `OP_FINALIZE_RECOVERY` constants were never
+// referenced under `src/` and only attracted "let's wire these up"
+// diffs that would conflict with the existing recovery state machine.
+// Removed. Recovery state changes still emit
+// `RecoveryInitiated` / `RecoveryFinalized` / `RecoveryCancelled`
+// events for indexer reconstruction (per the events-for-indexer rule).
 
 // ------------------------------------------------------------------
 // Default timelock windows (seconds). Can be overridden per account at
