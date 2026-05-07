@@ -432,6 +432,14 @@ pub mod ShhhAccount {
             assert(owner_id < self.owners.owner_count(), 'SHHH: unknown owner_id');
             let owner: OwnerRecord = self.owners.get_owner(owner_id);
             assert(!owner.revoked, 'SHHH: owner revoked');
+            // Audit C-1 (2026-05-07 self-review): only `ROLE_OWNER` may
+            // sign arbitrary OEs. `ROLE_GUARDIAN` is recovery-only;
+            // `ROLE_RECOVERY_ONLY` never signs. Without this check, a
+            // guardian added "for emergency recovery" silently became a
+            // co-owner with full drain authority — the role distinction
+            // was enforced only at `initiate_recovery` / `cancel_recovery`,
+            // not on the OE verify path.
+            assert(owner.role == ROLE_OWNER, 'SHHH: signer not an owner');
 
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
@@ -928,6 +936,14 @@ pub mod ShhhAccount {
         stark_verifier_class: ClassHash,
         label: felt252,
     ) {
+        // Audit H-1 (2026-05-07 self-review): force atomic bundling with
+        // `upgrade(...)`. The legitimate migration path is the OLD class's
+        // multicall executing `[upgrade, bootstrap_from_sessions]` in one
+        // OE — call 2's caller is the account itself. Without this gate,
+        // any address watching the mempool could race the upgrade tx and
+        // call `bootstrap_from_sessions(attacker_pk, …)` first, seizing
+        // the account before the legitimate owner's bootstrap arrives.
+        _assert_self_call();
         // One-shot gate: V8 primary owner is frozen for the life of the
         // account. Trying to rebootstrap an already-initialized account
         // is an invariant violation.
@@ -1108,6 +1124,11 @@ pub mod ShhhAccount {
         assert(owner_id < self.owners.owner_count(), 'THRESH: unknown owner_id');
         let owner: OwnerRecord = self.owners.get_owner(owner_id);
         assert(!owner.revoked, 'THRESH: owner revoked');
+        // Audit C-1 (2026-05-07): guardians MUST NOT contribute weight to a
+        // threshold envelope. Same rationale as the single-owner OE path —
+        // a non-revoked GUARDIAN is otherwise indistinguishable from a
+        // primary owner and would silently satisfy the threshold.
+        assert(owner.role == ROLE_OWNER, 'THRESH: signer not an owner');
         let kind_tag = *sub.at(1);
         assert(kind_tag == owner.kind, 'THRESH: kind mismatch');
         let verifier_class = self.verifier_classes.read(owner.kind);

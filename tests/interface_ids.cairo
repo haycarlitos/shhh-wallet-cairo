@@ -25,7 +25,9 @@
 
 use shhh_wallet::outside_execution::ISRC9_V2_ID;
 use shhh_wallet::signer::interface::ISIGNER_ID;
-use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, store};
+use snforge_std::{
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address, store,
+};
 use starknet::{ClassHash, ContractAddress};
 
 #[starknet::interface]
@@ -177,6 +179,10 @@ fn test_migrated_account_registers_isigner_id() {
     let (addr, _) = account_class.deploy(@calldata).unwrap();
 
     reset_for_migration_simulation(addr);
+    // Audit H-1 (2026-05-07): bootstrap_from_sessions is now self-call
+    // gated; simulate the legitimate post-upgrade multicall where call
+    // 2's caller is the account itself.
+    start_cheat_caller_address(addr, addr);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     mig.bootstrap_from_sessions(0xCAFE, verifier_class, 'migrated');
 

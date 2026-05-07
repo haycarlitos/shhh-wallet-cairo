@@ -14,8 +14,21 @@
 //! running `bootstrap_from_sessions`.
 
 use shhh_wallet::owner_set::interface::ROLE_OWNER;
-use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, store};
+use snforge_std::{
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
+    stop_cheat_caller_address, store,
+};
 use starknet::{ClassHash, ContractAddress};
+
+/// Audit H-1 follow-up (2026-05-07): the migration entrypoint now
+/// gates on `_assert_self_call`, so test fixtures must simulate the
+/// legitimate path where the OLD class's multicall executes
+/// `[upgrade, bootstrap_from_sessions]` in one OE — call 2's caller
+/// is the account itself. This helper stamps that caller for one
+/// invocation.
+fn cheat_self_call(addr: ContractAddress) {
+    start_cheat_caller_address(addr, addr);
+}
 
 #[starknet::interface]
 trait IShhhReads<TContractState> {
@@ -72,6 +85,7 @@ fn test_cannot_rebootstrap_an_initialized_account() {
     let (addr, verifier) = declare_and_deploy();
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     // primary_kind already 'STARK' from the constructor.
+    cheat_self_call(addr);
     mig.bootstrap_from_sessions(0xCAFE, verifier, 'secondary');
 }
 
@@ -81,6 +95,7 @@ fn test_bootstrap_rejects_zero_public_key() {
     let (addr, verifier) = declare_and_deploy();
     reset_for_migration_simulation(addr);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
+    cheat_self_call(addr);
     mig.bootstrap_from_sessions(0, verifier, 'x');
 }
 
@@ -91,6 +106,7 @@ fn test_bootstrap_rejects_zero_verifier_class() {
     reset_for_migration_simulation(addr);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     let zero_class: ClassHash = 0.try_into().unwrap();
+    cheat_self_call(addr);
     mig.bootstrap_from_sessions(0xCAFE, zero_class, 'x');
 }
 
@@ -99,6 +115,7 @@ fn test_bootstrap_initializes_v8_state() {
     let (addr, verifier) = declare_and_deploy();
     reset_for_migration_simulation(addr);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
+    cheat_self_call(addr);
     mig.bootstrap_from_sessions(0xCAFE, verifier, 'migrated');
 
     let reads = IShhhReadsDispatcher { contract_address: addr };
@@ -133,7 +150,29 @@ fn test_double_bootstrap_reverts_even_after_reset() {
     let (addr, verifier) = declare_and_deploy();
     reset_for_migration_simulation(addr);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
+    cheat_self_call(addr);
     mig.bootstrap_from_sessions(0xCAFE, verifier, 'migrated');
     // Second call must revert — primary_kind is now nonzero.
     mig.bootstrap_from_sessions(0xDEAD, verifier, 'attacker');
+}
+
+/// Audit H-1 regression (2026-05-07): direct external invocation of
+/// `bootstrap_from_sessions` from any non-self caller MUST revert with
+/// 'SHHH: caller != self'. The legitimate path bundles
+/// `[upgrade, bootstrap_from_sessions]` in a single OE multicall so
+/// call 2 sees the account as caller. Without this guard, a mempool
+/// watcher could race the upgrade tx and seize the migrating account
+/// (the test fixture in this file used to do exactly that — it is now
+/// scoped to the self-call cheat).
+#[test]
+#[should_panic(expected: 'SHHH: caller != self')]
+fn test_audit_h1_bootstrap_rejects_external_caller() {
+    let (addr, verifier) = declare_and_deploy();
+    reset_for_migration_simulation(addr);
+    // Cheat as a hostile address — NOT the account itself.
+    let attacker: ContractAddress = 0xBAD.try_into().unwrap();
+    start_cheat_caller_address(addr, attacker);
+    let mig = IShhhMigrationDispatcher { contract_address: addr };
+    mig.bootstrap_from_sessions(0xCAFE, verifier, 'pwned');
+    stop_cheat_caller_address(addr);
 }

@@ -86,12 +86,30 @@ pub mod SpendingPolicyComponent {
             let contract_state = self.get_contract();
             HasAccountOwner::assert_only_self(contract_state);
 
+            // Audit H-3 (2026-05-07 self-review): preserve in-flight
+            // window state when an existing policy is updated. The
+            // previous behavior unconditionally reset
+            // `spent_in_window: 0` and `window_start: now`, which meant
+            // an owner *tightening* a leaking session's cap actually
+            // handed the running session a fresh window-worth of budget.
+            // Now: when a policy already exists for `(session_key, token)`,
+            // we keep its accumulated spend and original window start;
+            // only the caps and window length are mutated. New policies
+            // (existing.window_start == 0) start a fresh window at `now`
+            // as before.
+            let existing = self.policies.read((session_key, token));
+            let (preserved_spent, preserved_start) = if existing.window_start == 0 {
+                (0_u256, get_block_timestamp())
+            } else {
+                (existing.spent_in_window, existing.window_start)
+            };
+
             let policy = SpendingPolicy {
                 max_per_call,
                 max_per_window,
                 window_seconds,
-                spent_in_window: 0,
-                window_start: get_block_timestamp(),
+                spent_in_window: preserved_spent,
+                window_start: preserved_start,
             };
             self.policies.write((session_key, token), policy);
 

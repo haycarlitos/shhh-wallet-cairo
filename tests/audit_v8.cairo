@@ -7,12 +7,20 @@
 //! weren't covered. These tests close that gap.
 
 use shhh_wallet::outside_execution::{ISRC9_V2Dispatcher, ISRC9_V2DispatcherTrait, OutsideExecution};
+use shhh_wallet::owner_set::interface::ROLE_GUARDIAN;
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_caller_address,
+    start_cheat_caller_address, stop_cheat_caller_address,
 };
 use starknet::ContractAddress;
 use starknet::account::Call;
+
+const SIG_VERSION_V2_SNIP12: felt252 = 'V2_SNIP12';
+const TIMELOCK_ADD_OWNER: u64 = 172_800; // 48h — must match account.cairo
+
+// IShhhGov is declared once below (line ~150), with both add-owner and
+// set-threshold ops. Tests that need add_owner share the same
+// dispatcher.
 
 #[starknet::interface]
 trait IAccountExec<TContractState> {
@@ -121,6 +129,24 @@ fn test_v8_m3_signature_too_long() {
 trait IShhhGov<TContractState> {
     fn propose_set_threshold(ref self: TContractState, proposer: u32, new: u8) -> felt252;
     fn execute_set_threshold(ref self: TContractState, op_id: felt252, new: u8);
+    fn propose_add_owner(
+        ref self: TContractState,
+        proposer: u32,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> felt252;
+    fn execute_add_owner(
+        ref self: TContractState,
+        op_id: felt252,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> u32;
 }
 
 const TIMELOCK_SET_THRESHOLD: u64 = 172_800; // 48h — mirrors pending_ops.cairo
@@ -244,6 +270,60 @@ fn test_v8_blocklist_rejects_session_initiate_recovery() {
     // [session_pubkey, r, s, valid_until]
     let sig = array![0xDEAD, 0xAA, 0xBB, 10_000].span();
     src9.execute_from_outside_v2(oe, sig);
+}
+// ============================================================
+// Audit C-1 (2026-05-07 self-review) — guardian role MUST NOT be able
+// to sign an arbitrary OE. Without `assert(owner.role == ROLE_OWNER)`
+// in the OE verify path, a non-revoked GUARDIAN was indistinguishable
+// from a primary owner and could drain the account. The role check
+// fires BEFORE the verifier dispatch, so even an envelope with a
+// junk signature payload reverts with 'SHHH: signer not an owner'.
+// ============================================================
+
+fn deploy_account_with_guardian() -> (ContractAddress, u32) {
+    let verifier_class = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    let account_class = declare("ShhhAccount").unwrap().contract_class();
+    let calldata: Array<felt252> = array!['STARK', verifier_class.into(), 1, 0xAAAA, 'primary'];
+    let (addr, _) = account_class.deploy(@calldata).unwrap();
+
+    // Add a guardian via the timelocked propose/execute flow (self-call).
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    start_cheat_block_timestamp_global(100);
+    start_cheat_caller_address(addr, addr);
+    let op_id = gov
+        .propose_add_owner(0_u32, 'STARK', array![0xCCCC], ROLE_GUARDIAN, 1_u8, 'guardian');
+    start_cheat_block_timestamp_global(100 + TIMELOCK_ADD_OWNER + 1);
+    let guardian_id = gov
+        .execute_add_owner(op_id, 'STARK', array![0xCCCC], ROLE_GUARDIAN, 1_u8, 'guardian');
+    (addr, guardian_id)
+}
+
+#[test]
+#[should_panic(expected: 'SHHH: signer not an owner')]
+fn test_v8_audit_c1_guardian_cannot_sign_oe() {
+    let (addr, guardian_id) = deploy_account_with_guardian();
+    // The fixture left `start_cheat_caller_address(addr, addr)` active for
+    // the propose/execute self-call. Drop it so the OE submission below
+    // doesn't appear to come from the account itself.
+    stop_cheat_caller_address(addr);
+    let now: u64 = 100 + TIMELOCK_ADD_OWNER + 100;
+    start_cheat_block_timestamp_global(now);
+    let src9 = ISRC9_V2Dispatcher { contract_address: addr };
+    // ANY_CALLER caps the validity window at 7200s (M-2); keep ours
+    // well inside that. execute_after < now < execute_before.
+    let oe = OutsideExecution {
+        caller: 'ANY_CALLER'.try_into().unwrap(),
+        nonce: 0xC1,
+        execute_after: now - 10,
+        execute_before: now + 10,
+        calls: array![].span(),
+    };
+    // Envelope shape: [version, owner_id, kind_tag, ...verifier_payload].
+    // The role check fires before the verifier runs, so a junk payload
+    // is fine — the panic must come from the role assertion, not from
+    // signature validation.
+    let envelope: Array<felt252> = array![SIG_VERSION_V2_SNIP12, guardian_id.into(), 'STARK', 0, 0];
+    src9.execute_from_outside_v2(oe, envelope.span());
 }
 // ============================================================
 // Nonce replay on V8 — handled by the Phase 11 STARK-signed e2e test.
