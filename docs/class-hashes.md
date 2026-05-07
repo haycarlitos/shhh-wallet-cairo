@@ -15,7 +15,8 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 | Contract                  | Class hash                                                                  | Role                                                     |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8 account — dispatcher + multi-owner + timelock + recovery + sessions migration |
+| `ShhhAccount` V8.1        | `0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5`        | V8 account, audit-closed (2026-05-07 self-review). **Use this for new deploys.** |
+| `ShhhAccount` V8.0        | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8.0 account (declared 2026-04-28). **Deprecated — vulnerable to C-1 + H-1, see audits/2026-05-07.** Existing instances should rotate to V8.1. |
 | `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | STARK-curve owner signer                                 |
 | `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
 | `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 owner signer (programmatic / hardware)     |
@@ -36,15 +37,19 @@ For declare-tx hashes, fees, and per-user cost estimates see
 
 ## Deploy status
 
-**Eleven V8 classes declared on Starknet mainnet.** Six on 2026-04-28
+**Twelve V8 classes declared on Starknet mainnet.** Six on 2026-04-28
 (initial V8 set); on 2026-05-05: `EIP191Secp256k1Verifier`,
 `EIP712Secp256k1Verifier` (MetaMask `personal_sign` and
 `eth_signTypedData_v4`), `JwtES256AppleVerifier` (Sign in with Apple,
 single-tenant), and `JwtES256AppleSubVerifier` (Sign in with Apple,
 multi-tenant with sub binding); on 2026-05-06:
-`Bls12_381MinSigVerifier` (BLS12-381 min-sig-size, drand DST).
+`Bls12_381MinSigVerifier` (BLS12-381 min-sig-size, drand DST); on
+2026-05-07: `ShhhAccount` **V8.1** (audit-closed against the
+2026-05-07 self-review — C-1, H-1, H-2, H-3, M-1 partial, M-2, M-3,
+L-1). V8.0 stays declared for existing users but is deprecated for
+new deploys and should be rotated to V8.1.
 Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 194.08 STRK across the eleven classes.
+Total declare cost: 236.47 STRK across the twelve classes.
 
 Phase 13 + 14 audits are now post-launch hardening rather than
 pre-launch gating. If a finding requires a redeploy, V8.1 = new class

@@ -9,7 +9,8 @@ Pluggable-signer Starknet smart account: one account class that verifies signatu
 | Version | Branch       | Status                | Class hash                                                                  |
 |---------|--------------|-----------------------|-----------------------------------------------------------------------------|
 | V7      | `main`       | ✅ Mainnet (legacy)   | `0x2e599a0939f268c70acab242411225ddeefd7f3978e40dcb7c397ca39a9a13`         |
-| V8      | `v8-robust`  | ✅ Mainnet (current)  | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`         |
+| V8.0    | `v8-robust`  | ⚠️ Mainnet (deprecated 2026-05-07) | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`         |
+| V8.1    | `fix/audit-2026-05-07` | ✅ Mainnet (current)  | `0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5`         |
 
 ## V8 mainnet classes
 
