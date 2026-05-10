@@ -256,10 +256,45 @@ pub mod JwtES256AppleSubVerifier {
             // compare to the stored sub_hash. We also require sub_len
             // > 0 so a zero-length window can't trivially match a
             // poseidon-of-empty.
+            //
+            // Audit H-2 (2026-05-07 self-review): the bytes at
+            // [sub_offset .. sub_offset+sub_len] MUST be anchored to the
+            // JSON `"sub":"..."` claim, otherwise a malicious caller can
+            // point sub_offset into another user-controlled string field
+            // (Apple's JWT carries `email` and during onboarding
+            // `name.firstName` / `name.lastName` set via the
+            // `ASAuthorizationAppleIDRequest`) whose contents byte-match
+            // a victim's stored sub_hash. The attacker would then submit
+            // their *own* Apple-signed JWT and authenticate against the
+            // victim's account because ECDSA still validates (Apple
+            // really did sign the token — for the attacker).
+            //
+            // Anchor: require the 7 bytes immediately preceding
+            // sub_offset to equal `"sub":"` (0x22 0x73 0x75 0x62 0x22
+            // 0x3A 0x22) and the byte immediately at
+            // (sub_offset + sub_len) to equal the closing `"` (0x22).
+            // This is a low-cost local check; a full JSON parser is the
+            // long-term fix.
             if sub_len == 0_u32 {
                 return false;
             }
             if sub_offset + sub_len > payload_decoded.len() {
+                return false;
+            }
+            // Preamble check: payload[sub_offset-7 .. sub_offset] == "sub":"
+            if sub_offset < 7_u32 {
+                return false;
+            }
+            let preamble_ok = check_sub_preamble(@payload_decoded, sub_offset - 7_u32);
+            if !preamble_ok {
+                return false;
+            }
+            // Closing quote check: payload[sub_offset + sub_len] == "
+            let closer = match payload_decoded.at(sub_offset + sub_len) {
+                Option::Some(b) => b,
+                Option::None => { return false; },
+            };
+            if closer != 0x22_u8 {
                 return false;
             }
             let mut sub_felts: Array<felt252> = array![];
@@ -303,6 +338,30 @@ pub mod JwtES256AppleSubVerifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_JWT_ES256_APPLE_SUB
         }
+    }
+
+    /// Audit H-2 anchor check: confirms the seven bytes at
+    /// `payload[start .. start+7]` equal the JSON preamble `"sub":"`,
+    /// i.e. the bytes that immediately precede the value of the `sub`
+    /// claim in a well-formed JWT payload. Without this check the
+    /// caller could point sub_offset into any user-controlled string
+    /// field (`email`, `name.firstName`, …) whose bytes happen to
+    /// match a victim's stored sub_hash.
+    fn check_sub_preamble(payload: @ByteArray, start: u32) -> bool {
+        // "sub":" → 0x22 0x73 0x75 0x62 0x22 0x3A 0x22
+        let want: Array<u8> = array![0x22, 0x73, 0x75, 0x62, 0x22, 0x3A, 0x22];
+        let mut i: u32 = 0;
+        while i < 7_u32 {
+            let got = match payload.at(start + i) {
+                Option::Some(b) => b,
+                Option::None => { return false; },
+            };
+            if got != *want.at(i) {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 
     /// Returns `b"https://appleid.apple.com"` (25 bytes).

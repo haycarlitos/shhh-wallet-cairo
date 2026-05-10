@@ -11,7 +11,10 @@
 
 use shhh_wallet::session_key::interface::SessionData;
 use shhh_wallet::spending_policy::interface::SpendingPolicy;
-use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address};
+use snforge_std::{
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
+    start_cheat_caller_address,
+};
 use starknet::ContractAddress;
 
 #[starknet::interface]
@@ -146,6 +149,46 @@ fn test_self_call_set_and_remove_spending_policy() {
     let p2 = s.get_spending_policy(0xDEAD, tok);
     assert(p2.max_per_call == 0_u256, 'max_per_call cleared');
     assert(p2.max_per_window == 0_u256, 'max_per_window cleared');
+}
+
+// ============================================================
+// Audit H-3 (2026-05-07 self-review) — `set_spending_policy` MUST
+// preserve in-flight window state when an existing policy is
+// updated. Previously it unconditionally reset
+//   `spent_in_window: 0`, `window_start: now`
+// which meant an owner *tightening* a leaking session's cap actually
+// handed the running session a fresh window-worth of budget. The
+// fix preserves both fields when a policy already exists.
+//
+// This test proves window_start is preserved across a tightening.
+// (Asserting `spent_in_window` would require simulating a successful
+// session-driven spend, which needs the STARK-session-signed fixture
+// from the Phase 11 e2e harness.)
+// ============================================================
+
+#[test]
+fn test_audit_h3_set_spending_policy_preserves_window_start() {
+    let addr = deploy_account();
+    let s = IShhhSessionsDispatcher { contract_address: addr };
+    let tok = token_addr(0xAB);
+
+    // First create at t=1000.
+    start_cheat_block_timestamp_global(1000_u64);
+    start_cheat_caller_address(addr, addr);
+    s.set_spending_policy(0xCAFE, tok, 10_u256, 100_u256, 86_400_u64);
+    let p1 = s.get_spending_policy(0xCAFE, tok);
+    assert(p1.window_start == 1000_u64, 'initial window_start');
+
+    // Owner tightens the cap mid-window at t=2500. window_start MUST
+    // remain at 1000 — pre-fix behavior would have reset it to 2500
+    // (a fresh window) and silently re-budgeted the running session.
+    start_cheat_block_timestamp_global(2500_u64);
+    s.set_spending_policy(0xCAFE, tok, 5_u256, 50_u256, 86_400_u64);
+    let p2 = s.get_spending_policy(0xCAFE, tok);
+    assert(p2.window_start == 1000_u64, 'window_start was reset');
+    assert(p2.max_per_call == 5_u256, 'cap not tightened');
+    assert(p2.max_per_window == 50_u256, 'window cap not tightened');
+    assert(p2.spent_in_window == 0_u256, 'spent should still be 0');
 }
 
 // ============================================================

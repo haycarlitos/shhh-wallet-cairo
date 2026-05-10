@@ -7,12 +7,20 @@
 //! weren't covered. These tests close that gap.
 
 use shhh_wallet::outside_execution::{ISRC9_V2Dispatcher, ISRC9_V2DispatcherTrait, OutsideExecution};
+use shhh_wallet::owner_set::interface::ROLE_GUARDIAN;
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_caller_address,
+    start_cheat_caller_address, stop_cheat_caller_address,
 };
 use starknet::ContractAddress;
 use starknet::account::Call;
+
+const SIG_VERSION_V2_SNIP12: felt252 = 'V2_SNIP12';
+const TIMELOCK_ADD_OWNER: u64 = 172_800; // 48h — must match account.cairo
+
+// IShhhGov is declared once below (line ~150), with both add-owner and
+// set-threshold ops. Tests that need add_owner share the same
+// dispatcher.
 
 #[starknet::interface]
 trait IAccountExec<TContractState> {
@@ -121,6 +129,24 @@ fn test_v8_m3_signature_too_long() {
 trait IShhhGov<TContractState> {
     fn propose_set_threshold(ref self: TContractState, proposer: u32, new: u8) -> felt252;
     fn execute_set_threshold(ref self: TContractState, op_id: felt252, new: u8);
+    fn propose_add_owner(
+        ref self: TContractState,
+        proposer: u32,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> felt252;
+    fn execute_add_owner(
+        ref self: TContractState,
+        op_id: felt252,
+        kind: felt252,
+        pubkey_bytes: Array<felt252>,
+        role: felt252,
+        weight: u8,
+        label: felt252,
+    ) -> u32;
 }
 
 const TIMELOCK_SET_THRESHOLD: u64 = 172_800; // 48h — mirrors pending_ops.cairo
@@ -244,6 +270,148 @@ fn test_v8_blocklist_rejects_session_initiate_recovery() {
     // [session_pubkey, r, s, valid_until]
     let sig = array![0xDEAD, 0xAA, 0xBB, 10_000].span();
     src9.execute_from_outside_v2(oe, sig);
+}
+// ============================================================
+// Audit C-1 (2026-05-07 self-review) — guardian role MUST NOT be able
+// to sign an arbitrary OE. Without `assert(owner.role == ROLE_OWNER)`
+// in the OE verify path, a non-revoked GUARDIAN was indistinguishable
+// from a primary owner and could drain the account. The role check
+// fires BEFORE the verifier dispatch, so even an envelope with a
+// junk signature payload reverts with 'SHHH: signer not an owner'.
+// ============================================================
+
+fn deploy_account_with_guardian() -> (ContractAddress, u32) {
+    let verifier_class = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    let account_class = declare("ShhhAccount").unwrap().contract_class();
+    let calldata: Array<felt252> = array!['STARK', verifier_class.into(), 1, 0xAAAA, 'primary'];
+    let (addr, _) = account_class.deploy(@calldata).unwrap();
+
+    // Add a guardian via the timelocked propose/execute flow (self-call).
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    start_cheat_block_timestamp_global(100);
+    start_cheat_caller_address(addr, addr);
+    let op_id = gov
+        .propose_add_owner(0_u32, 'STARK', array![0xCCCC], ROLE_GUARDIAN, 1_u8, 'guardian');
+    start_cheat_block_timestamp_global(100 + TIMELOCK_ADD_OWNER + 1);
+    let guardian_id = gov
+        .execute_add_owner(op_id, 'STARK', array![0xCCCC], ROLE_GUARDIAN, 1_u8, 'guardian');
+    (addr, guardian_id)
+}
+
+#[test]
+#[should_panic(expected: 'SHHH: signer not an owner')]
+fn test_v8_audit_c1_guardian_cannot_sign_oe() {
+    let (addr, guardian_id) = deploy_account_with_guardian();
+    // The fixture left `start_cheat_caller_address(addr, addr)` active for
+    // the propose/execute self-call. Drop it so the OE submission below
+    // doesn't appear to come from the account itself.
+    stop_cheat_caller_address(addr);
+    let now: u64 = 100 + TIMELOCK_ADD_OWNER + 100;
+    start_cheat_block_timestamp_global(now);
+    let src9 = ISRC9_V2Dispatcher { contract_address: addr };
+    // ANY_CALLER caps the validity window at 7200s (M-2); keep ours
+    // well inside that. execute_after < now < execute_before.
+    let oe = OutsideExecution {
+        caller: 'ANY_CALLER'.try_into().unwrap(),
+        nonce: 0xC1,
+        execute_after: now - 10,
+        execute_before: now + 10,
+        calls: array![].span(),
+    };
+    // Envelope shape: [version, owner_id, kind_tag, ...verifier_payload].
+    // The role check fires before the verifier runs, so a junk payload
+    // is fine — the panic must come from the role assertion, not from
+    // signature validation.
+    let envelope: Array<felt252> = array![SIG_VERSION_V2_SNIP12, guardian_id.into(), 'STARK', 0, 0];
+    src9.execute_from_outside_v2(oe, envelope.span());
+}
+// ============================================================
+// Audit M-3 (2026-05-07 self-review) — V8 mirrors of the V7
+// audit-regression suite. The 2026-04-20 audit was tested against
+// V7 (`ShhhWallet`); mainnet has been declaring V8 (`ShhhAccount`)
+// since 2026-04-28, so the same guards need V8-specific covers.
+//
+//   M-3a: H-2 — canonical SRC9_V2 interface ID is registered on a
+//         freshly-deployed V8 account.
+//   M-3b: I-3 — V8 has no `upgrade` selector; calling it must
+//         revert (entrypoint not found / unimplemented).
+//   M-3c: L-1 — V8 constructor refuses a primary kind of zero.
+//   M-4 (per-verifier trailing-bytes) is regression-tested inside
+//         each verifier's own test suite (e.g.
+//         `tests/signer_jwt_es256.cairo::test_rejects_extra_trailing_bytes`).
+// ============================================================
+
+#[starknet::interface]
+trait ISRC5<TContractState> {
+    fn supports_interface(self: @TContractState, interface_id: felt252) -> bool;
+}
+
+const ISRC9_V2_ID: felt252 = 0x1d1144bb2138366ff28d8e9ab57456b1d332ac42196230c3a602003c89872;
+
+#[test]
+fn test_v8_audit_m3_h2_registers_canonical_snip9_id() {
+    let addr = deploy_account();
+    let src5 = ISRC5Dispatcher { contract_address: addr };
+    assert(src5.supports_interface(ISRC9_V2_ID), 'V8 H2: canonical id missing');
+}
+
+#[starknet::interface]
+trait IMaybeUpgradeable<TContractState> {
+    fn upgrade(ref self: TContractState, new_class_hash: starknet::ClassHash);
+}
+
+#[test]
+#[should_panic]
+fn test_v8_audit_m3_i3_no_upgrade_entrypoint() {
+    // Audit I-3: V8 deliberately ships without an `upgrade` selector
+    // (only the one-shot `bootstrap_from_sessions` migration path
+    // exists). A direct call to `upgrade(...)` MUST revert because
+    // the selector is not exported. snforge's dispatcher panics on
+    // entrypoint-not-found.
+    let addr = deploy_account();
+    let dispatcher = IMaybeUpgradeableDispatcher { contract_address: addr };
+    dispatcher.upgrade(0xdead.try_into().unwrap());
+}
+
+#[test]
+#[should_panic]
+fn test_v8_audit_m3_l1_constructor_rejects_zero_kind() {
+    // Audit L-1 (V7) on V8: deploying with `primary_kind == 0`
+    // would leave the dispatcher unable to resolve the verifier
+    // class for its own primary owner. The constructor's
+    // `'L1: primary_kind is zero'` assertion blocks this.
+    let v = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    let cls = declare("ShhhAccount").unwrap().contract_class();
+    // [primary_kind=0, verifier_class, pubkey_len=1, pubkey, label]
+    let calldata: Array<felt252> = array![0, v.into(), 1, 0xAAAA, 'x'];
+    cls.deploy(@calldata).unwrap();
+}
+
+// ============================================================
+// Audit M-2 (2026-05-07 self-review) — verifier reentrancy guard.
+// A library-call'd verifier MUST NOT be able to recurse into a
+// `_assert_self_call`-gated mutator: with the `inside_verifier`
+// flag held high during `dispatcher.verify(...)`, any self-call to
+// `propose_add_owner` / `set_spending_policy` / `cancel_recovery`
+// reverts with 'SHHH: verifier reentry'.
+//
+// Direct positive test would require a malicious verifier helper
+// class. The flag's effect is observable indirectly: a regular
+// owner-self-call to `propose_set_threshold` (NOT inside a verifier)
+// must still succeed — confirming the flag does not leak into
+// legitimate flows. This complements the negative case which is
+// expressed by inspection of the storage-flag invariant.
+// ============================================================
+
+#[test]
+fn test_v8_audit_m2_self_call_outside_verifier_succeeds() {
+    let addr = deploy_account();
+    let gov = IShhhGovDispatcher { contract_address: addr };
+    start_cheat_block_timestamp_global(1_000_000);
+    start_cheat_caller_address(addr, addr);
+    // Should NOT panic: inside_verifier is false here, so
+    // _assert_self_call passes both checks.
+    let _op_id = gov.propose_set_threshold(0_u32, 1_u8);
 }
 // ============================================================
 // Nonce replay on V8 — handled by the Phase 11 STARK-signed e2e test.

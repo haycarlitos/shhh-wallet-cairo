@@ -15,7 +15,8 @@ what each user-facing operation will cost going forward.
 
 | Contract                  | Class hash                                                           | Voyager                                                                     |
 |---------------------------|----------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3` | [link](https://voyager.online/class/0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3) |
+| `ShhhAccount` V8.1        | `0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5` | [link](https://voyager.online/class/0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5) |
+| `ShhhAccount` V8.0 (dep.) | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3` | [link](https://voyager.online/class/0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3) |
 | `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b` | [link](https://voyager.online/class/0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b) |
 | `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774` | [link](https://voyager.online/class/0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774) |
 | `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6` | [link](https://voyager.online/class/0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6) |
@@ -46,7 +47,8 @@ STRK price reference: $0.038 / STRK (2026-04-28)
 | JwtES256AppleVerifier     | 222 KB      | `0x20cc2ef4042f2cb4c80aad1c0cb544fda3d32a2ae7b3f532f33e1eb532e3263`     | 13.8337 STRK| $0.530  |
 | JwtES256AppleSubVerifier  | 243 KB      | `0x35cac3d88dca7fc4136af5a285fb38454d0f2a8c5d2659d294c39f12150537e`     | 14.7752 STRK| $0.566  |
 | Bls12_381MinSigVerifier   | 1.7 MB      | `0x129d66c892d7ea36a1c15a902cf673a37e97d33b5c3e6c0f7f6258b712d79d2`     | 59.2020 STRK| $2.270  |
-| **Total**                 |             |                                                                        | **194.080 STRK** | **$7.440** |
+| ShhhAccount V8.1          | 845 KB      | `0x14379d2ce90b43d28250b9a17e58f338e62a51305e4199bc8144e964b095ff`       | 42.3944 STRK| $1.625  |
+| **Total**                 |             |                                                                        | **236.474 STRK** | **$9.065** |
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.

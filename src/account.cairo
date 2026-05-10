@@ -114,6 +114,17 @@ pub mod ShhhAccount {
         // session-key envelope in hand and try to stack a second
         // execution on top of the first.
         oe_in_progress: bool,
+        // Audit M-2 (2026-05-07 self-review): library-call verifiers run
+        // in the account's storage AND address context, so a malicious
+        // verifier could `call_contract_syscall(self_addr, ...)` back
+        // into a `_assert_self_call`-gated mutator (propose_add_owner,
+        // set_spending_policy, …) and trivially satisfy the self-call
+        // assertion. We set this flag for the duration of every
+        // `dispatcher.verify(...)` library_call and refuse self-calls
+        // while it's set. Trust model is governance-vetted verifier
+        // classes; this is defense-in-depth in case a malicious class
+        // makes it through the 48h ADD_VERIFIER timelock unanimously.
+        inside_verifier: bool,
         // Components.
         #[substorage(v0)]
         src5: SRC5Component::Storage,
@@ -432,6 +443,14 @@ pub mod ShhhAccount {
             assert(owner_id < self.owners.owner_count(), 'SHHH: unknown owner_id');
             let owner: OwnerRecord = self.owners.get_owner(owner_id);
             assert(!owner.revoked, 'SHHH: owner revoked');
+            // Audit C-1 (2026-05-07 self-review): only `ROLE_OWNER` may
+            // sign arbitrary OEs. `ROLE_GUARDIAN` is recovery-only;
+            // `ROLE_RECOVERY_ONLY` never signs. Without this check, a
+            // guardian added "for emergency recovery" silently became a
+            // co-owner with full drain authority — the role distinction
+            // was enforced only at `initiate_recovery` / `cancel_recovery`,
+            // not on the OE verify path.
+            assert(owner.role == ROLE_OWNER, 'SHHH: signer not an owner');
 
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
@@ -442,7 +461,14 @@ pub mod ShhhAccount {
             let pubkey = self.owners.read_pubkey_bytes(owner);
             let verifier_payload = _slice_from(signature, OE_OWNER_ENVELOPE_HEADER_LEN);
             let dispatcher = ISignerLibraryDispatcher { class_hash: verifier_class };
+            // Audit M-2 (2026-05-07): raise the inside_verifier flag so a
+            // malicious verifier class can't recurse into a
+            // `_assert_self_call`-gated mutator while we hold an open
+            // library_call. Lower it before assert(ok) so the
+            // signature-invalid revert path doesn't leak the flag.
+            self.inside_verifier.write(true);
             let ok = dispatcher.verify(message_hash, pubkey.span(), verifier_payload);
+            self.inside_verifier.write(false);
             assert(ok, 'SHHH: signature invalid');
 
             // 6. Atomic multicall (H-1).
@@ -542,7 +568,7 @@ pub mod ShhhAccount {
         weight: u8,
         label: felt252,
     ) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         let commitment = crate::signer::interface::owner_commitment(kind, pubkey_bytes.span());
         let payload = _payload_add_owner(kind, commitment, role, weight, label);
         self
@@ -552,7 +578,7 @@ pub mod ShhhAccount {
 
     #[external(v0)]
     fn propose_remove_owner(ref self: ContractState, proposer: u32, owner_id: u32) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         let payload = _payload_remove_owner(owner_id);
         self
             .governance
@@ -569,7 +595,7 @@ pub mod ShhhAccount {
     fn propose_rotate_owner(
         ref self: ContractState, proposer: u32, owner_id: u32, new_pubkey_bytes: Array<felt252>,
     ) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         let owner = self.owners.get_owner(owner_id);
         let new_hash = crate::signer::interface::owner_commitment(
             owner.kind, new_pubkey_bytes.span(),
@@ -588,7 +614,7 @@ pub mod ShhhAccount {
 
     #[external(v0)]
     fn propose_set_threshold(ref self: ContractState, proposer: u32, new: u8) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         let payload = _payload_set_threshold(new);
         self
             .governance
@@ -605,7 +631,7 @@ pub mod ShhhAccount {
     fn propose_add_verifier_class(
         ref self: ContractState, proposer: u32, kind: felt252, class_hash: ClassHash,
     ) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         assert(
             Into::<ClassHash, felt252>::into(self.verifier_classes.read(kind)) == 0,
             'SHHH: verifier already set',
@@ -626,7 +652,7 @@ pub mod ShhhAccount {
     fn propose_remove_verifier_class(
         ref self: ContractState, proposer: u32, kind: felt252,
     ) -> felt252 {
-        _assert_self_call();
+        _assert_self_call(@self);
         assert(kind != self.primary_kind.read(), 'SHHH: cant remove primary kind');
         let payload = _payload_remove_verifier(kind);
         self
@@ -658,6 +684,17 @@ pub mod ShhhAccount {
         label: felt252,
     ) -> u32 {
         let pubkey_span = pubkey_bytes.span();
+        // Audit M-1 (2026-05-07 self-review): per-kind shape check at
+        // registration. Catches the obvious garbage-pubkey footgun
+        // (16 felts of `1` for BLS, 4 felts where 5 are needed for
+        // sub-bound JWT, etc.). The full M-1 fix — calling the
+        // verifier's `validate_pubkey` over `library_call` so each
+        // class can run its own curve-membership check (subgroup
+        // exclusion for BLS, secp256_ec_new_syscall for EVM-family
+        // curves, etc.) — is a follow-up that touches every verifier
+        // class and forces a redeclare. Documented in
+        // audits/2026-05-07-claude-opus-pre-phase13-review.md.
+        _assert_pubkey_shape(kind, pubkey_span);
         let commitment = crate::signer::interface::owner_commitment(kind, pubkey_span);
         let expected = _payload_add_owner(kind, commitment, role, weight, label);
         let op = self.governance.assert_ready(op_id, expected);
@@ -682,6 +719,8 @@ pub mod ShhhAccount {
     ) {
         let owner = self.owners.get_owner(owner_id);
         let new_span = new_pubkey_bytes.span();
+        // Audit M-1: same shape check on rotation as on registration.
+        _assert_pubkey_shape(owner.kind, new_span);
         let new_hash = crate::signer::interface::owner_commitment(owner.kind, new_span);
         let expected = _payload_rotate_owner(owner_id, new_hash);
         let op = self.governance.assert_ready(op_id, expected);
@@ -734,7 +773,7 @@ pub mod ShhhAccount {
 
     #[external(v0)]
     fn cancel_pending_op(ref self: ContractState, op_id: felt252) {
-        _assert_self_call();
+        _assert_self_call(@self);
         self.governance.cancel(op_id);
     }
 
@@ -778,7 +817,7 @@ pub mod ShhhAccount {
         new_weight: u8,
         new_label: felt252,
     ) {
-        _assert_self_call();
+        _assert_self_call(@self);
         let proposer_record = self.owners.get_owner(proposer);
         assert(!proposer_record.revoked, 'RECOVERY: proposer revoked');
         assert(proposer_record.role == ROLE_GUARDIAN, 'RECOVERY: not a guardian');
@@ -794,7 +833,7 @@ pub mod ShhhAccount {
 
     #[external(v0)]
     fn cancel_recovery(ref self: ContractState, owner_id: u32) {
-        _assert_self_call();
+        _assert_self_call(@self);
         let owner = self.owners.get_owner(owner_id);
         assert(!owner.revoked, 'RECOVERY: canceler revoked');
         assert(owner.role == ROLE_OWNER, 'RECOVERY: not an owner');
@@ -928,6 +967,14 @@ pub mod ShhhAccount {
         stark_verifier_class: ClassHash,
         label: felt252,
     ) {
+        // Audit H-1 (2026-05-07 self-review): force atomic bundling with
+        // `upgrade(...)`. The legitimate migration path is the OLD class's
+        // multicall executing `[upgrade, bootstrap_from_sessions]` in one
+        // OE — call 2's caller is the account itself. Without this gate,
+        // any address watching the mempool could race the upgrade tx and
+        // call `bootstrap_from_sessions(attacker_pk, …)` first, seizing
+        // the account before the legitimate owner's bootstrap arrives.
+        _assert_self_call(@self);
         // One-shot gate: V8 primary owner is frozen for the life of the
         // account. Trying to rebootstrap an already-initialized account
         // is an invariant violation.
@@ -1013,8 +1060,55 @@ pub mod ShhhAccount {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn _assert_self_call() {
+    fn _assert_self_call(self: @ContractState) {
         assert(get_caller_address() == get_contract_address(), 'SHHH: caller != self');
+        // Audit M-2 (2026-05-07): refuse self-calls that originate from
+        // inside a library_call'd verifier. A malicious verifier class
+        // running in the account's storage + address context could
+        // otherwise loop back into any `_assert_self_call`-gated mutator
+        // and effectively be a co-owner. The `inside_verifier` flag is
+        // raised around every `dispatcher.verify(...)` and lowered after
+        // it returns; legitimate self-call mutators are issued from the
+        // multicall executor where this flag is never set.
+        assert(!self.inside_verifier.read(), 'SHHH: verifier reentry');
+    }
+
+    /// Audit M-1 (2026-05-07 self-review) — per-kind length shape check
+    /// for owner pubkeys. Run at registration (`execute_add_owner`,
+    /// `bootstrap_from_sessions`) and at rotation (`execute_rotate_owner`)
+    /// so a malformed pubkey can't silently land in the owner_set and
+    /// poison every multisig flow that includes that owner. This is the
+    /// length-only portion of M-1; full curve-membership / subgroup
+    /// validation is left to the verifier's `verify` and is a follow-up
+    /// that adds a `validate_pubkey` method to the ISigner trait.
+    fn _assert_pubkey_shape(kind: felt252, pubkey: Span<felt252>) {
+        let expected_len: u32 = if kind == 'STARK' {
+            1_u32
+        } else if kind == 'ED25519' {
+            2_u32
+        } else if kind == 'SECP256K1' {
+            4_u32
+        } else if kind == 'EIP191_SECP256K1' {
+            4_u32
+        } else if kind == 'EIP712_SECP256K1' {
+            4_u32
+        } else if kind == 'P256' {
+            4_u32
+        } else if kind == 'WEBAUTHN_P256' {
+            4_u32
+        } else if kind == 'JWT_ES256' {
+            4_u32
+        } else if kind == 'JWT_ES256_APPLE_SUB' {
+            5_u32
+        } else if kind == 'BLS12_381' {
+            16_u32
+        } else {
+            // Unknown kind — refuse to register. Adding a new kind
+            // requires updating both the verifier_classes governance
+            // window and this lookup.
+            core::panic_with_felt252('M1: unknown owner kind')
+        };
+        assert(pubkey.len() == expected_len, 'M1: bad pubkey shape');
     }
 
     /// Session-sig validation (SNIPs#163 base blocklist + V8 extension).
@@ -1108,6 +1202,11 @@ pub mod ShhhAccount {
         assert(owner_id < self.owners.owner_count(), 'THRESH: unknown owner_id');
         let owner: OwnerRecord = self.owners.get_owner(owner_id);
         assert(!owner.revoked, 'THRESH: owner revoked');
+        // Audit C-1 (2026-05-07): guardians MUST NOT contribute weight to a
+        // threshold envelope. Same rationale as the single-owner OE path —
+        // a non-revoked GUARDIAN is otherwise indistinguishable from a
+        // primary owner and would silently satisfy the threshold.
+        assert(owner.role == ROLE_OWNER, 'THRESH: signer not an owner');
         let kind_tag = *sub.at(1);
         assert(kind_tag == owner.kind, 'THRESH: kind mismatch');
         let verifier_class = self.verifier_classes.read(owner.kind);
@@ -1115,7 +1214,12 @@ pub mod ShhhAccount {
         let pubkey = self.owners.read_pubkey_bytes(owner);
         let payload = _slice_from(sub, 2);
         let dispatcher = ISignerLibraryDispatcher { class_hash: verifier_class };
+        // Audit M-2 (2026-05-07): same flag wrapping as the single-owner
+        // path — block re-entry into self-call-gated mutators while a
+        // library_call'd verifier holds the floor.
+        self.inside_verifier.write(true);
         let ok = dispatcher.verify(message_hash, pubkey.span(), payload);
+        self.inside_verifier.write(false);
         assert(ok, 'THRESH: inner sig invalid');
         (owner_id, owner.kind, owner.weight)
     }
