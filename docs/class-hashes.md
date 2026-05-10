@@ -1,15 +1,23 @@
-# V8 class hashes (declared on mainnet 2026-04-28)
+# V8 class hashes (live on Starknet mainnet)
 
-All six V8 classes are **live on Starknet mainnet**. Hashes are
-deterministic functions of the compiled Sierra, so the values below
-were known and published before declare and verified byte-for-byte
-post-declare.
+V8 launched 2026-04-28 with six classes. As of 2026-05-11 there are
+**14 V8.x classes** declared on mainnet:
+
+- **11 active classes** for new deploys (V8.3 `ShhhAccount` + 10 V8.2 verifier classes).
+- **3 deprecated `ShhhAccount` classes** (V8.0 / V8.1 / V8.2) retained for legacy recognition; they have unfixed audit findings from earlier review cycles and must not be used for new deploys.
+
+Hashes are deterministic functions of the compiled Sierra, so the
+values in the tables below were known and published before declare
+and verified byte-for-byte post-declare.
 
 Build environment: Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7. Branch
-`v8-robust` at the declare commit.
+`v8-robust` at the most recent merge commit.
 
 For declare-tx hashes, fees, and per-user cost estimates see
-[`mainnet-deployment.md`](./mainnet-deployment.md).
+[`mainnet-deployment.md`](./mainnet-deployment.md). Audit-trail
+docs: `audits/2026-05-07-claude-opus-pre-phase13-review.md`,
+`audits/2026-05-10-claude-opus-v8-2-review.md`,
+`docs/audit-response-2026-05-10.md`.
 
 ## Production classes (V8.3 — current; declared 2026-05-11)
 
@@ -67,23 +75,41 @@ instances remain readable; **new deploys MUST use V8.2.**
 
 ## Deploy status
 
-**Twelve V8 classes declared on Starknet mainnet.** Six on 2026-04-28
-(initial V8 set); on 2026-05-05: `EIP191Secp256k1Verifier`,
-`EIP712Secp256k1Verifier` (MetaMask `personal_sign` and
-`eth_signTypedData_v4`), `JwtES256AppleVerifier` (Sign in with Apple,
-single-tenant), and `JwtES256AppleSubVerifier` (Sign in with Apple,
-multi-tenant with sub binding); on 2026-05-06:
-`Bls12_381MinSigVerifier` (BLS12-381 min-sig-size, drand DST); on
-2026-05-07: `ShhhAccount` **V8.1** (audit-closed against the
-2026-05-07 self-review — C-1, H-1, H-2, H-3, M-1 partial, M-2, M-3,
-L-1). V8.0 stays declared for existing users but is deprecated for
-new deploys and should be rotated to V8.1.
-Declarer: `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`.
-Total declare cost: 236.47 STRK across the twelve classes.
+**14 V8.x classes declared on Starknet mainnet** by deployer
+`0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`:
 
-Phase 13 + 14 audits are now post-launch hardening rather than
-pre-launch gating. If a finding requires a redeploy, V8.1 = new class
-hash + opt-in migration (existing V8 wallets keep working).
+- 2026-04-28 — initial 6: V8.0 `ShhhAccount` + StarkVerifier +
+  Ed25519Verifier + Secp256k1Verifier + P256Verifier +
+  WebAuthnP256Verifier.
+- 2026-05-05 — +4: `EIP191Secp256k1Verifier`,
+  `EIP712Secp256k1Verifier`, `JwtES256AppleVerifier`,
+  `JwtES256AppleSubVerifier`.
+- 2026-05-06 — +1: `Bls12_381MinSigVerifier`.
+- 2026-05-07 — V8.1 `ShhhAccount` redeclare (audit-closed against
+  2026-05-07 self-review: C-1, H-1, H-2, H-3, M-1 partial, M-2,
+  M-3, L-1).
+- 2026-05-10 — V8.2 redeclare of ShhhAccount + all 10 verifier
+  classes (full M-1 closure via `validate_pubkey` on the `ISigner`
+  trait; trait shape changed → fresh hashes for every class).
+- 2026-05-11 — V8.3 `ShhhAccount` redeclare (audit-closed against
+  2026-05-10 V8.2 self-review: H-1 finalize_recovery, M-1
+  inside_verifier symmetry, M-2 bootstrap_from_sessions, M-3 evil
+  verifier negative tests). Verifier class hashes unchanged from
+  V8.2.
+
+Total declare cost: ~283 STRK across the 14 classes.
+
+V8.0 / V8.1 / V8.2 `ShhhAccount` classes stay declared for legacy
+recognition but are deprecated for new deploys. V8.1 verifier class
+hashes are incompatible with V8.2+ ShhhAccount because they lack
+`validate_pubkey`. Existing V8.x instances do not have a self-upgrade
+path — the only path from V8.0/V8.1 to V8.3 is to deploy a fresh
+V8.3 account at a new address and migrate funds manually.
+
+Phase 13 + 14 external audits are gated on the V8.3 commit. If an
+audit finding requires a redeploy, V8.4 = new class hash + opt-in
+new-address deploy (existing V8.x wallets keep working at their
+current class).
 
 ## How to reproduce
 
@@ -92,7 +118,9 @@ cd shhh-wallet-cairo
 git checkout v8-robust
 scarb build
 for c in ShhhAccount StarkVerifier Ed25519Verifier Secp256k1Verifier \
-         P256Verifier WebAuthnP256Verifier; do
+         EIP191Secp256k1Verifier EIP712Secp256k1Verifier P256Verifier \
+         WebAuthnP256Verifier JwtES256AppleVerifier \
+         JwtES256AppleSubVerifier Bls12_381MinSigVerifier; do
   sncast utils class-hash --contract-name "$c"
 done
 ```

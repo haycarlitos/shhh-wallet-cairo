@@ -28,7 +28,7 @@
 use shhh_wallet::owner_set::interface::{ROLE_GUARDIAN, ROLE_OWNER};
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp_global,
-    start_cheat_caller_address, stop_cheat_caller_address,
+    start_cheat_caller_address, stop_cheat_caller_address, store,
 };
 use starknet::{ClassHash, ContractAddress};
 
@@ -213,28 +213,65 @@ fn test_v8_3_m1_validate_pubkey_blocks_reentry_into_self_call_mutator() {
 }
 
 // =====================================================================
-//  M-2 positive — bootstrap_from_sessions calls validate_pubkey
+//  M-2 negative — bootstrap_from_sessions actually invokes
+//  validate_pubkey on the registered verifier class.
 //
-//  Today the path is correct-by-coincidence (kind hardcoded to STARK,
-//  upstream `assert(public_key != 0)` matches StarkVerifier's
-//  shape-only check). The test below pins that
-//  `_validate_pubkey_via_verifier` IS in the call chain — running it
-//  with public_key=0 produces the 'MIG: public_key is zero' panic
-//  upstream of validate_pubkey, but the surrounding wiring (the
-//  `verifier_classes.write` followed by validate_pubkey delegation)
-//  is exercised by the existing migration test
-//  `test_bootstrap_initializes_v8_state`. A regression that reverts
-//  the validate_pubkey wiring would surface there as either a panic
-//  or a wrong observed event count.
+//  Audit C-1 (2026-05-11): the prior smoke test only proved the
+//  helper module compiles — a future maintainer removing
+//  `_validate_pubkey_via_verifier(ref self, kind, pubkey_span);`
+//  from bootstrap_from_sessions could ship the regression with CI
+//  still green. This test injects the EvilPanicVerifier as the
+//  STARK verifier class; if bootstrap calls validate_pubkey the
+//  test panics with 'EVIL: validate panicked'. If a regression
+//  removes the validate call the test fails-open with a
+//  PrimaryOwnerInitialized event and no panic — which would fail
+//  the should_panic expectation.
 // =====================================================================
 
 #[test]
-fn test_v8_3_m2_bootstrap_uses_validate_pubkey() {
-    // Smoke: just deploy + read storage. The full integration check
-    // is the existing `tests/account_migration.cairo::test_bootstrap_initializes_v8_state`,
-    // which still passes — confirming the validate_pubkey insertion
-    // didn't break the bootstrap path. This test exists as a sentinel
-    // that the helper module compiles + the module-tree wiring is
-    // correct.
-    let (_addr, _) = declare_v8_account_and_stark();
+#[should_panic(expected: 'EVIL: validate panicked')]
+fn test_v8_3_m2_bootstrap_panics_when_validate_panics() {
+    // Deploy ShhhAccount with a normal STARK primary so the
+    // constructor's own validate_pubkey lookup hits a real verifier.
+    // (Constructor validates the primary pubkey via the legitimate
+    // StarkVerifier — we can't put EvilPanicVerifier in the
+    // constructor without breaking the deploy.)
+    let stark_class = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    let evil_class = *declare("EvilPanicVerifier").unwrap().contract_class().class_hash;
+    let account_class = declare("ShhhAccount").unwrap().contract_class();
+    let calldata: Array<felt252> = array!['STARK', stark_class.into(), 1, 0xAAAA, 'primary'];
+    let (addr, _) = account_class.deploy(@calldata).unwrap();
+
+    // Simulate a freshly-upgraded sessions wallet: wipe the V8
+    // primary scalars + owner_set so `bootstrap_from_sessions` can
+    // re-initialise. Match `tests/account_migration.cairo::reset_for_migration_simulation`.
+    store(addr, selector!("primary_kind"), array![0].span());
+    store(addr, selector!("primary_pubkey_hash"), array![0].span());
+    store(addr, selector!("address_salt"), array![0].span());
+    store(addr, selector!("owners_count"), array![0].span());
+    store(addr, selector!("active_count"), array![0].span());
+    store(addr, selector!("threshold"), array![0].span());
+    store(addr, selector!("primary_owner_id"), array![0].span());
+    store(addr, selector!("pubkey_cursor"), array![0].span());
+
+    // Bootstrap with EvilPanicVerifier as the STARK verifier class.
+    // The account's `_validate_pubkey_via_verifier(ref self, kind,
+    // pubkey_span)` dispatches via library_call into
+    // EvilPanicVerifier::validate_pubkey, which panics with
+    // 'EVIL: validate panicked'. Pre-V8.3 the helper wasn't called
+    // and the test would fail-open with no panic.
+    start_cheat_caller_address(addr, addr);
+    let mig = IShhhMigrationDispatcher { contract_address: addr };
+    mig.bootstrap_from_sessions(0xCAFE, evil_class.try_into().unwrap(), 'evil-migration');
+    stop_cheat_caller_address(addr);
+}
+
+#[starknet::interface]
+trait IShhhMigration<TContractState> {
+    fn bootstrap_from_sessions(
+        ref self: TContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+    );
 }
