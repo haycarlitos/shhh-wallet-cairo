@@ -156,5 +156,26 @@ pub mod Ed25519Verifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_ED25519
         }
+
+        /// Audit M-1 (V8.2) — Ed25519 pubkey is two LE u256 halves
+        /// (32-byte twisted-Edwards-encoded public key). Shape-only
+        /// check; Garaga's `is_valid_eddsa_signature` rejects any
+        /// off-curve / not-in-subgroup pubkey at verify time by
+        /// returning false (no panic), so a bad pubkey landing in
+        /// `owners` produces only "soft fail" verifies — no DoS.
+        fn validate_pubkey(self: @ContractState, pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != 2_u32 {
+                return false;
+            }
+            let _: u128 = match (*pubkey.at(0)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let _: u128 = match (*pubkey.at(1)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            true
+        }
     }
 }

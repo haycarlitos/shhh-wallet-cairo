@@ -35,5 +35,21 @@ pub mod StarkVerifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_STARK
         }
+
+        /// Audit M-1 (V8.2) — STARK pubkey is a single non-zero felt252.
+        /// No curve check beyond shape: any non-zero felt252 fits in the
+        /// STARK prime field. Off-curve points are rejected at verify
+        /// time by `check_ecdsa_signature` returning false.
+        fn validate_pubkey(self: @ContractState, pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != 1_u32 {
+                return false;
+            }
+            let pk: felt252 = *pubkey.at(0);
+            if pk == 0 {
+                false
+            } else {
+                true
+            }
+        }
     }
 }

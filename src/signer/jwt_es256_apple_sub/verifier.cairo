@@ -338,6 +338,42 @@ pub mod JwtES256AppleSubVerifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_JWT_ES256_APPLE_SUB
         }
+
+        /// Audit M-1 (V8.2) — sub-bound JWT pubkey is 5 felts:
+        /// 4 P-256 coords + a `sub_hash` (any felt252; no validation
+        /// needed since it's an opaque poseidon commitment).
+        fn validate_pubkey(self: @ContractState, pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != 5_u32 {
+                return false;
+            }
+            let x_low: u128 = match (*pubkey.at(0)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x_high: u128 = match (*pubkey.at(1)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_low: u128 = match (*pubkey.at(2)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_high: u128 = match (*pubkey.at(3)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x = u256 { low: x_low, high: x_high };
+            let y = u256 { low: y_low, high: y_high };
+            // sub_hash (pubkey.at(4)) is any felt252 — opaque poseidon
+            // commitment; no cryptographic validation possible at
+            // registration. The verify path checks it against
+            // poseidon over the JWT sub-claim bytes.
+            match Secp256Trait::<Secp256r1Point>::secp256_ec_new_syscall(x, y) {
+                Result::Ok(Option::Some(_)) => true,
+                Result::Ok(Option::None) => false,
+                Result::Err(_) => false,
+            }
+        }
     }
 
     /// Audit H-2 anchor check: confirms the seven bytes at

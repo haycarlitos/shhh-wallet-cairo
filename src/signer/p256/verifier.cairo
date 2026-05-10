@@ -100,5 +100,37 @@ pub mod P256Verifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_P256
         }
+
+        /// Audit M-1 (V8.2) — P-256 pubkey is `(x, y)` as 4 u128 halves.
+        /// On-curve check via `secp256_ec_new_syscall<Secp256r1Point>`.
+        /// Graceful (no panic).
+        fn validate_pubkey(self: @ContractState, pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != 4_u32 {
+                return false;
+            }
+            let x_low: u128 = match (*pubkey.at(0)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x_high: u128 = match (*pubkey.at(1)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_low: u128 = match (*pubkey.at(2)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_high: u128 = match (*pubkey.at(3)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x = u256 { low: x_low, high: x_high };
+            let y = u256 { low: y_low, high: y_high };
+            match Secp256Trait::<Secp256r1Point>::secp256_ec_new_syscall(x, y) {
+                Result::Ok(Option::Some(_)) => true,
+                Result::Ok(Option::None) => false,
+                Result::Err(_) => false,
+            }
+        }
     }
 }

@@ -207,6 +207,40 @@ pub mod Bls12_381MinSigVerifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_BLS12_381
         }
+
+        /// Audit M-1 (V8.2) — BLS12-381 G2 pubkey shape + curve +
+        /// subgroup membership.
+        ///
+        /// Behavior contract is documented as "MAY panic" in
+        /// `src/signer/interface.cairo` because Garaga's
+        /// `assert_in_subgroup_excluding_infinity` panics on bad input
+        /// (off-curve, infinity, non-r-torsion). The registration tx
+        /// reverting is the same outcome as `validate_pubkey` returning
+        /// false → `assert(ok, 'M1: invalid pubkey')` — both prevent the
+        /// poison-pill from landing in `owners`.
+        ///
+        /// Concrete failure modes the panic covers:
+        ///   - off-curve point ('point not on curve')
+        ///   - point at infinity ('point at infinity')
+        ///   - non-r-torsion ('bls12-381 pt not in subgroup')
+        ///   - malformed limbs (downcast::<u96> failure inside
+        ///     deserialize_u384)
+        ///
+        /// Length mismatch returns false gracefully.
+        fn validate_pubkey(self: @ContractState, mut pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != PUBKEY_LEN {
+                return false;
+            }
+            let x0 = deserialize_u384(ref pubkey);
+            let x1 = deserialize_u384(ref pubkey);
+            let y0 = deserialize_u384(ref pubkey);
+            let y1 = deserialize_u384(ref pubkey);
+            let pubkey_g2 = G2Point { x0: x0, x1: x1, y0: y0, y1: y1 };
+            // Panics propagate up and revert the registration tx.
+            // Equivalent to returning false for security purposes.
+            pubkey_g2.assert_in_subgroup_excluding_infinity(BLS_CURVE_INDEX);
+            true
+        }
     }
 
     /// Convert a `felt252` (≤252 bits) to its 32-byte big-endian
