@@ -11,16 +11,21 @@ Build environment: Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7. Branch
 For declare-tx hashes, fees, and per-user cost estimates see
 [`mainnet-deployment.md`](./mainnet-deployment.md).
 
-## Production classes (V8.2 — current; declared 2026-05-10)
+## Production classes (V8.3 — current; declared 2026-05-11)
 
-V8.2 closes audit M-1 fully — every verifier ships a `validate_pubkey`
-method called via library_call at owner registration. Trait shape
-changed → all 11 V8.2 class hashes are fresh. **Pin these for any
-new deploy.**
+V8.3 closes the four findings from the 2026-05-10 V8.2 self-review
+(audit doc at `audits/2026-05-10-claude-opus-v8-2-review.md`):
+H-1 (`finalize_recovery` skipped `_validate_pubkey_via_verifier`),
+M-1 (`validate_pubkey` library_call now wrapped in
+`inside_verifier` flag), M-2 (`bootstrap_from_sessions` now also
+calls validate_pubkey), M-3 (executable negative tests via
+`EvilVerifier` test helper). Only the account contract changed —
+verifier class hashes stay at V8.2 values.
 
 | Contract                  | Class hash                                                                  | Role                                                     |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount` V8.2        | `0x02a0b719d79b063cafd45a32d34c98b28f220baa678611db63790150a361a062`        | V8 account — full M-1 closure. **Use this for new deploys.** |
+| `ShhhAccount` V8.3        | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`        | V8 account — V8.2 + 2026-05-10 audit closeout. **Use this for new deploys.** |
+| `ShhhAccount` V8.2        | `0x02a0b719d79b063cafd45a32d34c98b28f220baa678611db63790150a361a062`        | V8.2 (audit M-1 partial in OE paths only). Deprecated 2026-05-11. |
 | `StarkVerifier`           | `0x00d09209b2da9d49fc805ba26380ba4ce25aa641116c10eb178e1051a71dbf68`        | STARK-curve owner signer (V8.2)                          |
 | `Ed25519Verifier`         | `0x030a7dfc03e59cef6e41699e734abd2df53ce393a052221c02c6e07665949f74`        | Ed25519 owner signer (Phantom / Solana) (V8.2)           |
 | `Secp256k1Verifier`       | `0x03e81667a46bd5287e09a9600fa98d28fdc477735f2689f5f4e8e95f37b67b74`        | Raw secp256k1 owner signer (V8.2)                        |

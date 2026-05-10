@@ -696,7 +696,7 @@ pub mod ShhhAccount {
         // gracefully via `secp256_ec_new_syscall`, BLS by propagating
         // Garaga's panic on non-r-torsion. Replaces V8.1's
         // `_assert_pubkey_shape` length-only stopgap.
-        _validate_pubkey_via_verifier(@self, kind, pubkey_span);
+        _validate_pubkey_via_verifier(ref self, kind, pubkey_span);
         let new_id = self.owners.add_owner(kind, commitment, pubkey_span, role, weight, label);
         self.governance.mark_executed(op_id);
         new_id
@@ -723,7 +723,7 @@ pub mod ShhhAccount {
         assert(op.op_kind == OP_ROTATE_OWNER, 'OP: wrong op_kind');
         // Audit M-1 (V8.2, full): same per-verifier validation on
         // rotation as on registration. Runs after governance gate.
-        _validate_pubkey_via_verifier(@self, owner.kind, new_span);
+        _validate_pubkey_via_verifier(ref self, owner.kind, new_span);
         self.owners.rotate_owner_pubkey(owner_id, new_hash, new_span);
         self.governance.mark_executed(op_id);
     }
@@ -856,6 +856,15 @@ pub mod ShhhAccount {
         );
         let stored = self.recovery.finalize();
         assert(stored == expected, 'RECOVERY: args mismatch');
+        // Audit H-1 (V8.3, 2026-05-10): the third owner-mutation entry
+        // point — was bypassing per-kind validation. A compromised
+        // guardian could `initiate_recovery` with a poison-pill pubkey,
+        // sit through the 7-day window, and `finalize_recovery` would
+        // add the malformed owner to `owner_set` with role ROLE_OWNER,
+        // contributing to total_weight even though it can never sign.
+        // Same `_validate_pubkey_via_verifier` library_call as
+        // `execute_add_owner` / `execute_rotate_owner`.
+        _validate_pubkey_via_verifier(ref self, new_owner_kind, pubkey_span);
         self
             .owners
             .add_owner(new_owner_kind, pubkey_hash, pubkey_span, new_role, new_weight, new_label)
@@ -996,6 +1005,14 @@ pub mod ShhhAccount {
         self.verifier_classes.write(kind, stark_verifier_class);
         self.src5.register_interface(ISRC9_V2_ID);
         self.src5.register_interface(ISIGNER_ID);
+        // Audit M-2 (V8.3, 2026-05-10): the third owner-mutation entry
+        // point — was bypassing per-kind validation. Today benign
+        // (kind hardcoded to STARK and `assert(public_key != 0)`
+        // coincides with `StarkVerifier::validate_pubkey`'s shape-only
+        // check) but the V8.2 invariant is "always delegate to
+        // verifier"; this path used to silently break it. Placed
+        // AFTER the verifier_classes.write so the lookup hits.
+        _validate_pubkey_via_verifier(ref self, kind, pubkey_span);
 
         self
             .emit(
@@ -1072,10 +1089,10 @@ pub mod ShhhAccount {
         assert(!self.inside_verifier.read(), 'SHHH: verifier reentry');
     }
 
-    /// Audit M-1 (V8.2, full) — delegate per-kind pubkey validation to
-    /// the registered verifier class via `library_call`. Each verifier
-    /// owns the per-kind length AND curve-membership check; the
-    /// account is now ignorant of curve specifics.
+    /// Audit M-1 (V8.2 full + V8.3 reentrancy) — delegate per-kind
+    /// pubkey validation to the registered verifier class via
+    /// `library_call`, with the M-2 `inside_verifier` flag raised
+    /// for the duration of the call.
     ///
     /// Behavior:
     ///   - For curves with a non-panicking on-curve syscall (secp256k1,
@@ -1088,64 +1105,32 @@ pub mod ShhhAccount {
     ///     returning false.
     ///   - For an unknown kind the verifier_classes lookup returns
     ///     a zero ClassHash, and we revert with `'SHHH: verifier
-    ///     missing'` — matches the verify path's behavior.
+    ///     missing'`.
     ///
-    /// Reuses the M-2 `inside_verifier` flag so the verifier class
-    /// can't reentrantly mutate any self-call gated state during the
-    /// `validate_pubkey` library_call.
-    fn _validate_pubkey_via_verifier(self: @ContractState, kind: felt252, pubkey: Span<felt252>) {
+    /// V8.3 (audit 2026-05-10) — `inside_verifier` is now raised
+    /// AROUND the library_call so a malicious verifier class
+    /// (governance-vetted but rogue) cannot
+    /// `call_contract_syscall(self, "propose_*")` back into a
+    /// `_assert_self_call`-gated mutator from inside its
+    /// validate_pubkey. The execute_add_owner / execute_rotate_owner
+    /// paths are PERMISSIONLESS post-timelock, so this flag is the
+    /// load-bearing reentrancy block for those paths — same trust
+    /// boundary the verify-path M-2 fix already enforces.
+    fn _validate_pubkey_via_verifier(
+        ref self: ContractState, kind: felt252, pubkey: Span<felt252>,
+    ) {
         let v_class = self.verifier_classes.read(kind);
         assert(Into::<ClassHash, felt252>::into(v_class) != 0, 'SHHH: verifier missing');
         let dispatcher = ISignerLibraryDispatcher { class_hash: v_class };
-        // Cast away &self to mutate the inside_verifier flag.
-        // Safe: this helper is only called from `ref self` mutators.
-        let mutable_self = self;
-        // Safety wrapper: raise inside_verifier (M-2 reuse) so any
-        // attempt by the verifier class to call_contract_syscall back
-        // into a `_assert_self_call`-gated mutator reverts.
-        // Note: re-using the M-2 flag gives the same defense-in-depth
-        // for the validate_pubkey path as for the verify path.
-        // The flag must be raised AND lowered with the same control
-        // flow as the verify path; we use a contract entry helper.
-        let ok = _call_validate_pubkey_with_flag(mutable_self, dispatcher, pubkey);
+        // V8.3 — raise inside_verifier, dispatch, lower, then check
+        // the result. Identical control flow to the verify path
+        // (single-owner OE at line 469-472 and threshold inner at
+        // 1257-1259) so a panic in dispatcher.validate_pubkey unwinds
+        // the storage write atomically along with the rest of the tx.
+        self.inside_verifier.write(true);
+        let ok = dispatcher.validate_pubkey(pubkey);
+        self.inside_verifier.write(false);
         assert(ok, 'M1: invalid pubkey');
-    }
-
-    /// Helper that wraps the validate_pubkey library_call with the
-    /// inside_verifier flag raise/lower bookkeeping. Defined as a
-    /// separate function so the call site stays readable.
-    fn _call_validate_pubkey_with_flag(
-        self: @ContractState, dispatcher: ISignerLibraryDispatcher, pubkey: Span<felt252>,
-    ) -> bool {
-        // Storage write requires `ref` access; we get it via the same
-        // pattern the verify path uses. The caller of
-        // `_validate_pubkey_via_verifier` is always a `ref self`
-        // function, so the flag write is sound.
-        // (Note: we cannot do `self.inside_verifier.write(...)` here
-        // because `self` is `@ContractState`. The verify path raises
-        // the flag inside the same function that holds `ref self`.
-        // Rather than refactor that, we accept that
-        // `_validate_pubkey_via_verifier` runs WITHOUT the
-        // inside_verifier flag set — the trade-off is documented
-        // below.
-        //
-        // Trade-off: the M-2 reentrancy guard does NOT cover the
-        // validate_pubkey library_call. Consequence: a malicious
-        // verifier class could `call_contract_syscall(self, "...")`
-        // back into a self-gated mutator from inside `validate_pubkey`.
-        // Mitigation: governance-vetted verifier classes via the 48h
-        // ADD_VERIFIER timelock + unanimous-owner requirement (the
-        // same trust assumption that gates `verify`). The verify path
-        // is wrapped in the M-2 flag for defense-in-depth; here we
-        // accept the same trust model.
-        //
-        // V8.3 candidate: refactor to pass `ref self` through to this
-        // helper so the flag covers the validate_pubkey path too. Not
-        // urgent: validate_pubkey is only called inside the
-        // governance-gated execute_add_owner / execute_rotate_owner
-        // / bootstrap_from_sessions paths, all of which are already
-        // self-call gated and timelock-protected upstream.)
-        dispatcher.validate_pubkey(pubkey)
     }
 
     /// Session-sig validation (SNIPs#163 base blocklist + V8 extension).
