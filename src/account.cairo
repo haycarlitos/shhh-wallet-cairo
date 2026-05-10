@@ -684,21 +684,19 @@ pub mod ShhhAccount {
         label: felt252,
     ) -> u32 {
         let pubkey_span = pubkey_bytes.span();
-        // Audit M-1 (2026-05-07 self-review): per-kind shape check at
-        // registration. Catches the obvious garbage-pubkey footgun
-        // (16 felts of `1` for BLS, 4 felts where 5 are needed for
-        // sub-bound JWT, etc.). The full M-1 fix — calling the
-        // verifier's `validate_pubkey` over `library_call` so each
-        // class can run its own curve-membership check (subgroup
-        // exclusion for BLS, secp256_ec_new_syscall for EVM-family
-        // curves, etc.) — is a follow-up that touches every verifier
-        // class and forces a redeclare. Documented in
-        // audits/2026-05-07-claude-opus-pre-phase13-review.md.
-        _assert_pubkey_shape(kind, pubkey_span);
         let commitment = crate::signer::interface::owner_commitment(kind, pubkey_span);
         let expected = _payload_add_owner(kind, commitment, role, weight, label);
         let op = self.governance.assert_ready(op_id, expected);
         assert(op.op_kind == OP_ADD_OWNER, 'OP: wrong op_kind');
+        // Audit M-1 (V8.2, full): delegate per-kind validation to the
+        // verifier class via library_call. Runs AFTER the governance
+        // gate so a malformed pubkey can never sneak past timelocks
+        // BUT the cheap timelock / op-kind checks fire first. Each
+        // verifier validates shape AND curve membership; secp/p256
+        // gracefully via `secp256_ec_new_syscall`, BLS by propagating
+        // Garaga's panic on non-r-torsion. Replaces V8.1's
+        // `_assert_pubkey_shape` length-only stopgap.
+        _validate_pubkey_via_verifier(ref self, kind, pubkey_span);
         let new_id = self.owners.add_owner(kind, commitment, pubkey_span, role, weight, label);
         self.governance.mark_executed(op_id);
         new_id
@@ -719,12 +717,13 @@ pub mod ShhhAccount {
     ) {
         let owner = self.owners.get_owner(owner_id);
         let new_span = new_pubkey_bytes.span();
-        // Audit M-1: same shape check on rotation as on registration.
-        _assert_pubkey_shape(owner.kind, new_span);
         let new_hash = crate::signer::interface::owner_commitment(owner.kind, new_span);
         let expected = _payload_rotate_owner(owner_id, new_hash);
         let op = self.governance.assert_ready(op_id, expected);
         assert(op.op_kind == OP_ROTATE_OWNER, 'OP: wrong op_kind');
+        // Audit M-1 (V8.2, full): same per-verifier validation on
+        // rotation as on registration. Runs after governance gate.
+        _validate_pubkey_via_verifier(ref self, owner.kind, new_span);
         self.owners.rotate_owner_pubkey(owner_id, new_hash, new_span);
         self.governance.mark_executed(op_id);
     }
@@ -857,6 +856,15 @@ pub mod ShhhAccount {
         );
         let stored = self.recovery.finalize();
         assert(stored == expected, 'RECOVERY: args mismatch');
+        // Audit H-1 (V8.3, 2026-05-10): the third owner-mutation entry
+        // point — was bypassing per-kind validation. A compromised
+        // guardian could `initiate_recovery` with a poison-pill pubkey,
+        // sit through the 7-day window, and `finalize_recovery` would
+        // add the malformed owner to `owner_set` with role ROLE_OWNER,
+        // contributing to total_weight even though it can never sign.
+        // Same `_validate_pubkey_via_verifier` library_call as
+        // `execute_add_owner` / `execute_rotate_owner`.
+        _validate_pubkey_via_verifier(ref self, new_owner_kind, pubkey_span);
         self
             .owners
             .add_owner(new_owner_kind, pubkey_hash, pubkey_span, new_role, new_weight, new_label)
@@ -997,6 +1005,14 @@ pub mod ShhhAccount {
         self.verifier_classes.write(kind, stark_verifier_class);
         self.src5.register_interface(ISRC9_V2_ID);
         self.src5.register_interface(ISIGNER_ID);
+        // Audit M-2 (V8.3, 2026-05-10): the third owner-mutation entry
+        // point — was bypassing per-kind validation. Today benign
+        // (kind hardcoded to STARK and `assert(public_key != 0)`
+        // coincides with `StarkVerifier::validate_pubkey`'s shape-only
+        // check) but the V8.2 invariant is "always delegate to
+        // verifier"; this path used to silently break it. Placed
+        // AFTER the verifier_classes.write so the lookup hits.
+        _validate_pubkey_via_verifier(ref self, kind, pubkey_span);
 
         self
             .emit(
@@ -1073,42 +1089,48 @@ pub mod ShhhAccount {
         assert(!self.inside_verifier.read(), 'SHHH: verifier reentry');
     }
 
-    /// Audit M-1 (2026-05-07 self-review) — per-kind length shape check
-    /// for owner pubkeys. Run at registration (`execute_add_owner`,
-    /// `bootstrap_from_sessions`) and at rotation (`execute_rotate_owner`)
-    /// so a malformed pubkey can't silently land in the owner_set and
-    /// poison every multisig flow that includes that owner. This is the
-    /// length-only portion of M-1; full curve-membership / subgroup
-    /// validation is left to the verifier's `verify` and is a follow-up
-    /// that adds a `validate_pubkey` method to the ISigner trait.
-    fn _assert_pubkey_shape(kind: felt252, pubkey: Span<felt252>) {
-        let expected_len: u32 = if kind == 'STARK' {
-            1_u32
-        } else if kind == 'ED25519' {
-            2_u32
-        } else if kind == 'SECP256K1' {
-            4_u32
-        } else if kind == 'EIP191_SECP256K1' {
-            4_u32
-        } else if kind == 'EIP712_SECP256K1' {
-            4_u32
-        } else if kind == 'P256' {
-            4_u32
-        } else if kind == 'WEBAUTHN_P256' {
-            4_u32
-        } else if kind == 'JWT_ES256' {
-            4_u32
-        } else if kind == 'JWT_ES256_APPLE_SUB' {
-            5_u32
-        } else if kind == 'BLS12_381' {
-            16_u32
-        } else {
-            // Unknown kind — refuse to register. Adding a new kind
-            // requires updating both the verifier_classes governance
-            // window and this lookup.
-            core::panic_with_felt252('M1: unknown owner kind')
-        };
-        assert(pubkey.len() == expected_len, 'M1: bad pubkey shape');
+    /// Audit M-1 (V8.2 full + V8.3 reentrancy) — delegate per-kind
+    /// pubkey validation to the registered verifier class via
+    /// `library_call`, with the M-2 `inside_verifier` flag raised
+    /// for the duration of the call.
+    ///
+    /// Behavior:
+    ///   - For curves with a non-panicking on-curve syscall (secp256k1,
+    ///     P-256 family) the verifier returns `false` on a bad pubkey;
+    ///     the assert here re-raises as a clean revert.
+    ///   - For BLS12-381 the verifier MAY panic (Garaga's
+    ///     `assert_in_subgroup_excluding_infinity` panics on
+    ///     non-r-torsion / off-curve / infinity). The panic propagates
+    ///     and reverts the registration tx — same security outcome as
+    ///     returning false.
+    ///   - For an unknown kind the verifier_classes lookup returns
+    ///     a zero ClassHash, and we revert with `'SHHH: verifier
+    ///     missing'`.
+    ///
+    /// V8.3 (audit 2026-05-10) — `inside_verifier` is now raised
+    /// AROUND the library_call so a malicious verifier class
+    /// (governance-vetted but rogue) cannot
+    /// `call_contract_syscall(self, "propose_*")` back into a
+    /// `_assert_self_call`-gated mutator from inside its
+    /// validate_pubkey. The execute_add_owner / execute_rotate_owner
+    /// paths are PERMISSIONLESS post-timelock, so this flag is the
+    /// load-bearing reentrancy block for those paths — same trust
+    /// boundary the verify-path M-2 fix already enforces.
+    fn _validate_pubkey_via_verifier(
+        ref self: ContractState, kind: felt252, pubkey: Span<felt252>,
+    ) {
+        let v_class = self.verifier_classes.read(kind);
+        assert(Into::<ClassHash, felt252>::into(v_class) != 0, 'SHHH: verifier missing');
+        let dispatcher = ISignerLibraryDispatcher { class_hash: v_class };
+        // V8.3 — raise inside_verifier, dispatch, lower, then check
+        // the result. Identical control flow to the verify path
+        // (single-owner OE at line 469-472 and threshold inner at
+        // 1257-1259) so a panic in dispatcher.validate_pubkey unwinds
+        // the storage write atomically along with the rest of the tx.
+        self.inside_verifier.write(true);
+        let ok = dispatcher.validate_pubkey(pubkey);
+        self.inside_verifier.write(false);
+        assert(ok, 'M1: invalid pubkey');
     }
 
     /// Session-sig validation (SNIPs#163 base blocklist + V8 extension).

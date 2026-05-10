@@ -11,22 +11,52 @@ Build environment: Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7. Branch
 For declare-tx hashes, fees, and per-user cost estimates see
 [`mainnet-deployment.md`](./mainnet-deployment.md).
 
-## Production classes (V8)
+## Production classes (V8.3 — current; declared 2026-05-11)
+
+V8.3 closes the four findings from the 2026-05-10 V8.2 self-review
+(audit doc at `audits/2026-05-10-claude-opus-v8-2-review.md`):
+H-1 (`finalize_recovery` skipped `_validate_pubkey_via_verifier`),
+M-1 (`validate_pubkey` library_call now wrapped in
+`inside_verifier` flag), M-2 (`bootstrap_from_sessions` now also
+calls validate_pubkey), M-3 (executable negative tests via
+`EvilVerifier` test helper). Only the account contract changed —
+verifier class hashes stay at V8.2 values.
 
 | Contract                  | Class hash                                                                  | Role                                                     |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount` V8.1        | `0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5`        | V8 account, audit-closed (2026-05-07 self-review). **Use this for new deploys.** |
-| `ShhhAccount` V8.0        | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | V8.0 account (declared 2026-04-28). **Deprecated — vulnerable to C-1 + H-1, see audits/2026-05-07.** Existing instances should rotate to V8.1. |
-| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | STARK-curve owner signer                                 |
-| `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Ed25519 owner signer (Phantom / Solana) via Garaga       |
-| `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 owner signer (programmatic / hardware)     |
-| `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`        | EIP-191 `personal_sign` — MetaMask, Rabby, every EVM wallet |
-| `EIP712Secp256k1Verifier` | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`        | EIP-712 typed-data — MetaMask `eth_signTypedData_v4` structured popup |
-| `P256Verifier`            | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`        | Raw P-256 owner signer (PIV / eIDAS / DeviceCheck)       |
-| `WebAuthnP256Verifier`    | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`        | Full WebAuthn envelope (passkeys / Face ID / Touch ID)   |
-| `JwtES256AppleVerifier`   | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`        | "Sign in with Apple" — single-tenant (Apple key per user) |
-| `JwtES256AppleSubVerifier`| `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`        | "Sign in with Apple" — multi-tenant (one Apple key, many users; sub-bound) |
-| `Bls12_381MinSigVerifier` | `0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d`        | BLS12-381 min-sig-size (drand DST) — validator multisigs, DAO keys, backend signers |
+| `ShhhAccount` V8.3        | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`        | V8 account — V8.2 + 2026-05-10 audit closeout. **Use this for new deploys.** |
+| `ShhhAccount` V8.2        | `0x02a0b719d79b063cafd45a32d34c98b28f220baa678611db63790150a361a062`        | V8.2 (audit M-1 partial in OE paths only). Deprecated 2026-05-11. |
+| `StarkVerifier`           | `0x00d09209b2da9d49fc805ba26380ba4ce25aa641116c10eb178e1051a71dbf68`        | STARK-curve owner signer (V8.2)                          |
+| `Ed25519Verifier`         | `0x030a7dfc03e59cef6e41699e734abd2df53ce393a052221c02c6e07665949f74`        | Ed25519 owner signer (Phantom / Solana) (V8.2)           |
+| `Secp256k1Verifier`       | `0x03e81667a46bd5287e09a9600fa98d28fdc477735f2689f5f4e8e95f37b67b74`        | Raw secp256k1 owner signer (V8.2)                        |
+| `EIP191Secp256k1Verifier` | `0x03a75997862059c36cb8e204fb3027eb6d1fdf933488d42c2db4528118d084e6`        | EIP-191 `personal_sign` — MetaMask, Rabby (V8.2)         |
+| `EIP712Secp256k1Verifier` | `0x072a3f77e8c28bfea2ade91ec3fb83b6290169d1ed8c1b2396704231841c6474`        | EIP-712 typed-data (V8.2)                                |
+| `P256Verifier`            | `0x01b600709af54c8838e5f18ddad3a26feeb47cb124c239f55a0f1b7a780e2d8a`        | Raw P-256 owner signer (V8.2)                            |
+| `WebAuthnP256Verifier`    | `0x074f6efd2af9025cd8cab41a4565bc73b6ef097214c31352838fcdbac0a44657`        | WebAuthn envelope (passkeys / Face ID) (V8.2)            |
+| `JwtES256AppleVerifier`   | `0x002efce875fa3e73e04d825d8ebade53e188cc995dfe0c55a6a2f7fa6c59f497`        | Sign in with Apple — single-tenant (V8.2)                |
+| `JwtES256AppleSubVerifier`| `0x06b67762218a25fdd28e25b063480893a5cef9cdeecbc663e32d444d5734c471`        | Sign in with Apple — multi-tenant (sub-bound) (V8.2)     |
+| `Bls12_381MinSigVerifier` | `0x02623721e74a9ad3e0ba639065f5631a09bf900913de6ab21ea6984973cd2cd1`        | BLS12-381 min-sig-size (drand DST) (V8.2)                |
+
+## Deprecated V8.0 / V8.1 classes (kept declared for legacy recognition)
+
+V8.1 verifier classes lack `validate_pubkey` and are incompatible with
+V8.2 ShhhAccount. The V8.0 / V8.1 ShhhAccount stay declared so legacy
+instances remain readable; **new deploys MUST use V8.2.**
+
+| Contract                  | V8.1 class hash (deprecated)                                                 |
+|---------------------------|------------------------------------------------------------------------------|
+| `ShhhAccount` V8.1        | `0x01e7f69e3c22c5a209c24fcd4c31683f7cf2f1850cd0037635bd582c93f363b5`         |
+| `ShhhAccount` V8.0        | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`         |
+| `StarkVerifier` V8.1      | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`         |
+| `Ed25519Verifier` V8.1    | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`         |
+| `Secp256k1Verifier` V8.1  | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`         |
+| `EIP191Secp256k1Verifier` V8.1 | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`    |
+| `EIP712Secp256k1Verifier` V8.1 | `0x0729a2303c20fb3ba8994809b9ae923301c7489a069ae7401fb13a55c9184b2b`    |
+| `P256Verifier` V8.1       | `0x029693329bb6f061e15c470ce2b169120cacfab47af024897b5588026c857810`         |
+| `WebAuthnP256Verifier` V8.1 | `0x078fd4ce33370699f44c221191ce0d8b7ccfccff77297f798dc7948b4201b9f4`       |
+| `JwtES256AppleVerifier` V8.1 | `0x06da4abb7fec87a9844d4a128b40621f282f694f56b108de76137b5174266ef8`      |
+| `JwtES256AppleSubVerifier` V8.1 | `0x034bfab90a072ea8717379ad50185692378a5048a2105c2928da3777ee09a316`   |
+| `Bls12_381MinSigVerifier` V8.1 | `0x052a0625cffd197b6aeb0de4806e16605d95d6bf0229efbc45b96a38e41b513d`    |
 
 ## Legacy (V7, pre-patch — already on mainnet)
 

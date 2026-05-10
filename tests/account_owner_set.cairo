@@ -69,7 +69,13 @@ const TIMELOCK_SET_THRESHOLD: u64 = 172_800; // 48h
 // --------------------------------------------------------------
 
 fn declare_verifier_and_account() -> (felt252, @snforge_std::ContractClass) {
-    let verifier_class = *declare("StarkVerifier").unwrap().contract_class().class_hash;
+    // Audit M-1 (V8.2) — `validate_pubkey` is now dispatched via
+    // library_call to the registered verifier class, so the kind tag
+    // and verifier class MUST match. These tests deploy with kind
+    // 'ED25519' and 2-felt pubkeys, so register Ed25519Verifier
+    // (was StarkVerifier under V8.1; V8.1's length-only check didn't
+    // catch the mismatch).
+    let verifier_class = *declare("Ed25519Verifier").unwrap().contract_class().class_hash;
     let account_class = declare("ShhhAccount").unwrap().contract_class();
     (verifier_class.into(), account_class)
 }

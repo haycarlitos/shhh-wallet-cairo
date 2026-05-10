@@ -89,6 +89,29 @@ pub trait ISigner<TContractState> {
 
     /// Returns the canonical kind tag this verifier implements.
     fn kind(self: @TContractState) -> felt252;
+
+    /// Audit M-1 (full, V8.2) — returns true iff `pubkey` is a
+    /// structurally valid public key for this verifier's kind.
+    ///
+    /// Called by `ShhhAccount::execute_add_owner`,
+    /// `execute_rotate_owner`, and `bootstrap_from_sessions` BEFORE
+    /// any owner-set mutation, so a malformed pubkey can never land
+    /// in storage and poison subsequent multisig flows.
+    ///
+    /// Contract:
+    ///   - MUST be pure (no storage writes).
+    ///   - MUST validate per-kind length (the V8.1 `_assert_pubkey_shape`
+    ///     stopgap is removed; verifiers own this now).
+    ///   - SHOULD validate curve membership / subgroup where the
+    ///     primitive supports a non-panicking check
+    ///     (`secp256_ec_new_syscall` for secp/p256 families; shape-only
+    ///     for STARK / Ed25519 / EIP-191 / EIP-712).
+    ///   - MAY panic on malformed BLS pubkeys: Garaga's
+    ///     `assert_in_subgroup_excluding_infinity` panics by design,
+    ///     and the registration tx reverting is the same outcome as
+    ///     returning false. Document this behavior in the verifier's
+    ///     module-level comment.
+    fn validate_pubkey(self: @TContractState, pubkey: Span<felt252>) -> bool;
 }
 
 // ------------------------------------------------------------------

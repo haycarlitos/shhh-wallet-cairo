@@ -121,5 +121,41 @@ pub mod Secp256k1Verifier {
         fn kind(self: @ContractState) -> felt252 {
             KIND_SECP256K1
         }
+
+        /// Audit M-1 (V8.2) — secp256k1 pubkey is `(x, y)` as four
+        /// LE u128 halves. Validates length + that the point is on
+        /// the secp256k1 curve via `secp256_ec_new_syscall` (returns
+        /// `Err` for off-curve, `Ok(None)` for (0,0)). Both map to
+        /// `false`. Graceful — no panics.
+        fn validate_pubkey(self: @ContractState, pubkey: Span<felt252>) -> bool {
+            if pubkey.len() != 4_u32 {
+                return false;
+            }
+            let x_low: u128 = match (*pubkey.at(0)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x_high: u128 = match (*pubkey.at(1)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_low: u128 = match (*pubkey.at(2)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let y_high: u128 = match (*pubkey.at(3)).try_into() {
+                Option::Some(v) => v,
+                Option::None => { return false; },
+            };
+            let x = u256 { low: x_low, high: x_high };
+            let y = u256 { low: y_low, high: y_high };
+            match starknet::secp256_trait::Secp256Trait::<
+                starknet::secp256k1::Secp256k1Point,
+            >::secp256_ec_new_syscall(x, y) {
+                Result::Ok(Option::Some(_)) => true,
+                Result::Ok(Option::None) => false,
+                Result::Err(_) => false,
+            }
+        }
     }
 }
