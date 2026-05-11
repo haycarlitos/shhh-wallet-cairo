@@ -19,7 +19,7 @@ Pin these in your SDK constants. Full deploy record (tx hashes, fees, Voyager li
 | Contract                  | Class hash                                                                  | Wallets / use case                                       |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
 | `ShhhAccount`             | `0x01d6e475526c1f0dddafe47f944efa52cd1d8af273771c4bf171aeb65919eae3`        | The account contract                                     |
-| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | Argent, Braavos, Ledger Starknet app                     |
+| `StarkVerifier`           | `0x06e671d2c70cf6d28ad18de864b82ffcbc60251b4dbcdb630ec17d4e1e43729b`        | Ready, Braavos, Ledger Starknet app                     |
 | `Ed25519Verifier`         | `0x004f075cb1dbbafde78faaa037824cc327e3a038ecd4ff7b8e2aa4ef039b1774`        | Phantom, Solflare, every Solana wallet                   |
 | `Secp256k1Verifier`       | `0x0473d8215659c5e91a8431557618f6664f698d16ba300d8d626027011391d8c6`        | Raw secp256k1 (programmatic / hardware)                  |
 | `EIP191Secp256k1Verifier` | `0x025c6a15e84aae7a999b449b08dc37da5071319eb09eec935161090148821c7f`        | MetaMask `personal_sign`, Rabby, every EVM wallet        |

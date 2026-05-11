@@ -36,7 +36,7 @@ Starknet's account model already permits arbitrary signature schemes: every acco
 
 | Team / project              | Primary signer             | Fork surface                                                  |
 |-----------------------------|----------------------------|---------------------------------------------------------------|
-| Argent                      | STARK + guardian (STARK)   | Owner + guardian + escape flow, STARK-only curve              |
+| Ready                      | STARK + guardian (STARK)   | Owner + guardian + escape flow, STARK-only curve              |
 | Braavos                     | STARK + hardware signer    | Hardware signer via external library                          |
 | Cartridge Controller        | WebAuthn P-256             | Custom SNIP-12 envelope, passkey-specific                     |
 | Clave                       | WebAuthn P-256             | Passkey-specific                                              |
@@ -45,7 +45,7 @@ Starknet's account model already permits arbitrary signature schemes: every acco
 | Starknet-by-example / OZ    | STARK ECDSA                | Reference-only, no multi-curve                                |
 | zkLogin-style proposals     | JWT (RSA/ES256)            | Research stage; no production deployments                     |
 
-Each is correct for its niche. None can verify a signature produced by another. A user who holds a Phantom wallet cannot use Argent's guardian recovery; a Cartridge passkey cannot sign a Chipi session-key invocation; zkLogin JWTs cannot share an account class with any of the above.
+Each is correct for its niche. None can verify a signature produced by another. A user who holds a Phantom wallet cannot use Ready's guardian recovery; a Cartridge passkey cannot sign a Chipi session-key invocation; zkLogin JWTs cannot share an account class with any of the above.
 
 **This SNIP was motivated directly by the April 2026 security review of the Shhh wallet.** Two converging signals: a Nethermind-AuditAgent scan run on 2026-04-13 by Henri (a repo collaborator; three structural findings) followed by Omar Espejel's human Codex/Cairo audit on 2026-04-20 ([report](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e); twelve findings). Three of Omar's findings converged on the same root cause Henri's scan first surfaced:
 
@@ -64,7 +64,7 @@ The fix for all three is the same: stop rolling custom signature envelopes. Use 
 **A standard enables:**
 - Any paymaster sponsors any wallet — signer-type discovery is on-chain and uniform.
 - A dapp SDK written once works across Phantom, MetaMask, passkey, and STARK wallets.
-- Starknet.js, Argent Wallet, Braavos can add non-STARK signer support without hardcoding each implementation.
+- Starknet.js, Ready Wallet, Braavos can add non-STARK signer support without hardcoding each implementation.
 - Audit surface consolidates: one `ISigner` trait + six Garaga/OZ components audited once, reused everywhere.
 
 **Market coverage.** The twelve canonical kinds in Part B (six Tier-1 curves plus six Tier-2 envelope variants) enumerate essentially every cryptographic-signer primitive shipping in production hardware and consumer software in 2026:
@@ -174,7 +174,7 @@ Compliant accounts MUST use one of the following `felt252` kind tags to identify
 
 | Kind tag         | Algorithm            | Canonical message form  | Real-world signers in production                                                                                               |
 |------------------|----------------------|-------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `'STARK'`        | Stark-curve ECDSA    | felt252 hash            | Argent, Braavos, OpenZeppelin account, Ledger Starknet app, relayers                                                           |
+| `'STARK'`        | Stark-curve ECDSA    | felt252 hash            | Ready, Braavos, OpenZeppelin account, Ledger Starknet app, relayers                                                           |
 | `'SECP256K1'`    | secp256k1 ECDSA      | 32-byte hash            | MetaMask (≈100M installs), Rainbow, Trust Wallet, Coinbase Wallet, Rabby, Frame, WalletConnect, Ledger, Trezor, GridPlus       |
 | `'ED25519'`      | Edwards25519 EdDSA   | arbitrary byte string   | Phantom (≈10M MAU), Solflare, Backpack, Glow, Keplr, Leap, Near wallet, SSH agents, GPG                                         |
 | `'P256'`         | NIST P-256 ECDSA     | 32-byte hash            | Enterprise PIV smart cards, eIDAS government eIDs, Apple DeviceCheck, corporate PKI                                            |
@@ -304,7 +304,7 @@ The reference implementation does **not** embed verifier logic as in-class Cairo
 
 This is a deliberate departure from the Cairo-component pattern used by the Session Keys SNIP. Three reasons:
 
-1. **One account class, many curves.** With component embedding, every kind an account supports adds bytes to that account's class hash — Argent + Phantom + passkey would be three different account classes. With library_call dispatch, a single audited `ShhhAccount` class serves N kinds; adding a new curve declares one new verifier class and (under governance) registers it. No account redeploy, no fresh address derivation, no fresh audit of the orchestration logic.
+1. **One account class, many curves.** With component embedding, every kind an account supports adds bytes to that account's class hash — Ready + Phantom + passkey would be three different account classes. With library_call dispatch, a single audited `ShhhAccount` class serves N kinds; adding a new curve declares one new verifier class and (under governance) registers it. No account redeploy, no fresh address derivation, no fresh audit of the orchestration logic.
 2. **Independently auditable verifiers.** Each verifier class is one Sierra binary that implements one curve. The audit scope of `Ed25519Verifier` is "does Garaga's `is_valid_eddsa_signature` get fed the right inputs and is the envelope fully consumed" — nothing more. The orchestration code that decides *whether* to call a verifier lives in the account class and is audited once.
 3. **Governance-rotatable.** A vulnerability in a single curve's verifier is fixed by declaring a patched verifier class and proposing `add_verifier_class(kind_tag, new_class_hash)` through the same timelocked governance path (`ADD_VERIFIER_CLASS`, 48h timelock, unanimous owner approval in the reference). Existing accounts pick up the fix on their next signature without redeploying. The `verifier_classes` map is the explicit governance-rotatable seam; absent it, every kind upgrade would force a fresh account address and a manual fund migration.
 
@@ -359,7 +359,7 @@ Without salt binding, a key re-encoded across curves could map to the same addre
 - **SNIP-6** (standard account): unchanged. `ISigner::verify` is the recommended implementation of `is_valid_signature` for non-STARK curves, but `is_valid_signature` itself is unchanged.
 - **SNIP-9 V2** (outside execution): unchanged on the protocol level. This SNIP tightens the integration requirements (Part D).
 - **Session Keys SNIP** ([starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163), merged 2026-03-03): designed to coexist. The 4-element session signature format is explicitly preserved; kind-tagged owner envelopes can never collide with it. An account implementing both SNIPs exposes session-key delegation (authority scoping) and pluggable owner signers (curve choice) as two orthogonal layers.
-- **Existing accounts** (Argent, Braavos, Cartridge, Clave, OZ reference): remain valid. They MAY adopt `ISigner` incrementally to expose their existing curve support through the standard interface.
+- **Existing accounts** (Ready, Braavos, Cartridge, Clave, OZ reference): remain valid. They MAY adopt `ISigner` incrementally to expose their existing curve support through the standard interface.
 
 ## Security Considerations
 

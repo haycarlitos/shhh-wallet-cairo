@@ -19,7 +19,7 @@ Thank you for the thorough audit. Every finding landed. I want to walk through h
 
 The Session Keys SNIP you and Chipi Pay merged via [starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163) fixed the authorization layer for modular accounts — *what a delegated key is allowed to do*. Every wallet that adopts it inherits a clean answer to scoping, paymaster interaction, and revocation.
 
-But every one of those wallets still has to answer a second question: *which curve is the owner key on, and how do I verify it?* Today each team answers it in private: Argent hardcodes STARK, Cartridge hardcodes P-256, Clave hardcodes passkey envelopes, Shhh hardcoded Ed25519 — which is exactly how H-2 in your audit happened. There's no standard to lean on, so everyone invents, and interfaces drift.
+But every one of those wallets still has to answer a second question: *which curve is the owner key on, and how do I verify it?* Today each team answers it in private: Ready hardcodes STARK, Cartridge hardcodes P-256, Clave hardcodes passkey envelopes, Shhh hardcoded Ed25519 — which is exactly how H-2 in your audit happened. There's no standard to lean on, so everyone invents, and interfaces drift.
 
 This is the gap. And if we close it now, with your sessions SNIP as the precedent, **every major signing device on Earth — roughly 99% of the signing surface area humans actually use — gets a one-line integration path into Starknet.** I'll show the math in the Market Coverage section below.
 
@@ -87,7 +87,7 @@ The signature-length routing you established in the sessions contract (0 = self,
 Ecosystem effect of layering the signer SNIP on top of the accepted sessions spec:
 - A Phantom user on LATAM can sign up to Cifra/Shhh with their Solana wallet, delegate a 7-day Liga MX betting session to a copy-trading bot, and pay zero gas — all through one paymaster that doesn't care which curve the owner uses.
 - Chipi Pay extends its reference-paymaster position from sessions-only to full modular-account coverage.
-- Argent, Braavos, Cartridge, Clave can adopt `ISigner` incrementally to expose their existing secp256r1/WebAuthn support through a uniform interface.
+- Ready, Braavos, Cartridge, Clave can adopt `ISigner` incrementally to expose their existing secp256r1/WebAuthn support through a uniform interface.
 
 ## Market coverage: who gets one-line Starknet onboarding
 
@@ -95,7 +95,7 @@ The six Tier-1 curves plus six Tier-2 envelope variants in the draft cover essen
 
 | Kind tag             | Who already signs with it                                                                   | Use case unlocked on Starknet                                                                              |
 |----------------------|---------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| `'STARK'`            | Argent, Braavos, OZ account holders, Ledger Starknet app, relayers                          | Native Starknet wallets + session delegation (status quo, no change)                                       |
+| `'STARK'`            | Ready, Braavos, OZ account holders, Ledger Starknet app, relayers                          | Native Starknet wallets + session delegation (status quo, no change)                                       |
 | `'SECP256K1'`        | Every EVM self-custody wallet — MetaMask (≈100M installs), Rainbow, Trust, Coinbase Wallet, Rabby, Frame, Ledger, Trezor, GridPlus, WalletConnect | EVM user bridges USDC via CCTP to a Starknet app, signs the Starknet tx with their existing MetaMask popup — no new wallet, no new seed |
 | `'EIP191_SECP256K1'` | Every EVM wallet's `personal_sign` UI                                                       | Dapp UX parity with Ethereum — MetaMask popup reads "Sign this message" exactly like users expect          |
 | `'EIP712_SECP256K1'` | Uniswap Permit2, OpenSea, any EIP-712 dapp                                                  | Typed-data Starknet signing for DeFi flows ported from Ethereum                                            |
@@ -128,7 +128,7 @@ To make it concrete — these are flows that *cannot happen today* without a cus
 
 - **Cifra (LATAM prediction market, WC 2026 launch)**: Spanish-speaking retail user opens `cifra.mx`, signs up with Face ID (`WEBAUTHN_P256`). Later imports Phantom (`ED25519`) to bring their Solana USDC. Later links their Google account (`JWT_RS256`) for recovery. All three signer methods point at the same underlying Starknet account class — only the signer component differs.
 - **Chipi paymaster expansion**: today sponsors STARK + session. Tomorrow sponsors MetaMask, Phantom, Apple passkey, Google login — same API, just reads `signer_kind()` from the target account.
-- **Argent recovery**: current guardian flow is STARK-curve-only. With `ISigner`, a user's guardian can be an Apple passkey on a second device, a Google account, or a hardware YubiKey — without Argent changing a line outside the guardian component.
+- **Ready recovery**: current guardian flow is STARK-curve-only. With `ISigner`, a user's guardian can be an Apple passkey on a second device, a Google account, or a hardware YubiKey — without Ready changing a line outside the guardian component.
 - **Cartridge gaming onboarding**: WebAuthn passkey + session key is already their flagship. `ISigner` means their passkey component becomes reusable across any account framework — Cartridge's lead in gaming UX compounds across the ecosystem rather than staying siloed.
 - **Corporate treasury**: employee signs on-chain payroll approvals with a PIV card (`RSA_2048`). Satisfies compliance, no crypto-wallet training required.
 - **Validator staking**: validators use their existing BLS key to sign Starknet governance votes — no new key material, no new hardware.

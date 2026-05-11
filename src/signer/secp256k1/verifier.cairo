@@ -2,7 +2,7 @@
 //! Wallet, Ledger, any EVM wallet.
 //!
 //! Uses Starknet's built-in `starknet::secp256_trait::recover_public_key`
-//! syscall (the same primitive Argent and Braavos use for their EVM
+//! syscall (the same primitive Ready and Braavos use for their EVM
 //! signers). Reconstructs the pubkey from (hash, r, s, v) and compares
 //! to what's stored.
 //!
