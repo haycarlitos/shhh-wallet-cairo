@@ -53,11 +53,20 @@ pub mod EvilReentrantVerifier {
             // verifier can also be used by the M-2 verify-path
             // regression (the in-tree audit_v8 test for that path
             // checks the symmetric flag behaviour).
+            //
+            // Audit C-2 (2026-05-11): `.unwrap_syscall()` MUST mirror
+            // the validate_pubkey method below. Without it the syscall
+            // result is silently discarded — a panic from the
+            // host account's `_assert_self_call` ('SHHH: verifier
+            // reentry') wouldn't surface, the function would return
+            // `true`, and any verify-path M-2 negative test using
+            // this helper would silently pass for the wrong reason.
             let target: starknet::ContractAddress = get_contract_address();
             let calldata: Array<felt252> = array![0_felt252, 1_felt252];
             let _ = call_contract_syscall(
                 target, selector!("propose_set_threshold"), calldata.span(),
-            );
+            )
+                .unwrap_syscall();
             true
         }
 

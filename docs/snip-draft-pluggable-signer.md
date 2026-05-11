@@ -9,7 +9,7 @@ type: Standards Track
 category: SRC
 created: 2026-04-16
 requires: SNIP-5, SNIP-6, SNIP-9, SNIP-12, Session Keys SNIP (starknet-io/SNIPs#163, `SNIPS/snip-x.md`)
-reference-impl: https://github.com/haycarlitos/shhh-wallet-cairo/tree/v8-robust (commit 6c30576)
+reference-impl: https://github.com/haycarlitos/shhh-wallet-cairo/tree/v8-robust (commit af45e95, V8.3, declared 2026-05-11)
 ---
 
 ## Simple Summary
@@ -20,11 +20,11 @@ Standard interface for curve-agnostic signature verification on Starknet smart a
 
 This SNIP defines:
 
-1. An `ISigner` trait with three methods: `verify`, `owner_commitment`, `signer_kind`.
-2. A canonical kind-tag registry covering six battle-tested primitives (STARK, SECP256K1, ED25519, P256, RSA_2048, BLS12_381) and seven envelope variants (WEBAUTHN_P256, EIP191_SECP256K1, EIP712_SECP256K1, DKIM_RSA, JWT_RS256, JWT_ES256, plus one custom extension slot).
-3. A signature envelope format: `[kind_tag, payload...]` that lets paymasters, dapps, and SDKs dispatch to the right verifier without off-chain negotiation.
+1. An `ISigner` trait with three methods: `verify(message_hash, pubkey, signature)`, `kind()`, `validate_pubkey(pubkey)`. Verifier classes are stateless: pubkey material is passed in on every call.
+2. A canonical kind-tag registry covering six battle-tested primitives (STARK, SECP256K1, ED25519, P256, RSA_2048, BLS12_381) and seven envelope variants (WEBAUTHN_P256, EIP191_SECP256K1, EIP712_SECP256K1, DKIM_RSA, JWT_RS256, JWT_ES256, JWT_ES256_APPLE_SUB).
+3. Three signature envelope shapes routed by a version tag: single-owner V2, threshold V2 (N-of-M with mixed kinds across owners), and the 4-element session-key envelope from the Session Keys SNIP. Outer routing is the account's responsibility; verifier classes only see the kind-specific payload.
 4. An integration protocol with SNIP-9 outside execution and the draft Session Keys SNIP, so that session keys and pluggable owner signatures coexist cleanly.
-5. A reference component layout (one component per curve, all sharing the same `ISigner` trait) with address-salt rules that prevent cross-class confusion.
+5. A library-call dispatch architecture (one separately-declared verifier class per kind, governance-rotatable from inside the account) with address-salt rules that prevent cross-kind confusion.
 
 Together, these components mean a single audited account contract family can serve every major wallet type on Earth — and paymasters can sponsor any of them without per-wallet integration work.
 
@@ -101,32 +101,59 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ### Part A: The `ISigner` Trait
 
-Compliant accounts MUST implement the following interface:
+The pluggable-signer architecture splits the *account* (which holds owner records + governance state) from the *verifier* (a separately-declared class that knows one signing primitive). The account stores `(kind_tag → verifier_class_hash)` and dispatches each owner-signed message to the matching verifier class via `library_call_syscall`. Verifier classes are stateless: they hold no storage of their own and receive the owner pubkey as a parameter on every call.
+
+Compliant verifier classes MUST implement:
 
 ```cairo
 #[starknet::interface]
 pub trait ISigner<TContractState> {
-    /// Verifies that `signature` authorizes `message_hash` under the account's stored owner key.
-    /// MUST be pure/read-only. MUST NOT write storage.
-    /// MUST return `true` only if the signature is cryptographically valid.
-    /// The `signature` span has the envelope format defined in Part C.
+    /// Verifies that `signature` authorizes `message_hash` under
+    /// `pubkey`. MUST be pure (no storage writes). MUST return
+    /// `true` only when the signature is cryptographically valid
+    /// AND its envelope has been fully consumed (no trailing data).
+    ///
+    /// `pubkey` is the per-owner key material stored on the account
+    /// (length and layout vary by kind — see Part B). `signature`
+    /// is the kind-specific payload from the envelope routing
+    /// in Part C (NOT the full outer envelope).
     fn verify(
         self: @TContractState,
         message_hash: felt252,
+        pubkey: Span<felt252>,
         signature: Span<felt252>,
     ) -> bool;
 
-    /// Returns a Poseidon commitment of the owner key material.
-    /// MUST be stable for the lifetime of the account.
-    /// Used for address-salt derivation (Part E) and off-chain account lookup.
-    fn owner_commitment(self: @TContractState) -> felt252;
+    /// Returns the canonical kind tag (Part B) this verifier
+    /// implements. Used by paymasters and SDKs for routing.
+    fn kind(self: @TContractState) -> felt252;
 
-    /// Returns the canonical kind tag (Part B) identifying which curve/envelope
-    /// this account's owner key uses.
-    /// MUST match the kind stored at deployment.
-    fn signer_kind(self: @TContractState) -> felt252;
+    /// Returns `true` iff `pubkey` is a structurally valid public
+    /// key for this verifier's kind. MUST be pure. MUST validate
+    /// per-kind length AND curve membership where the underlying
+    /// primitive supports a non-panicking check (e.g.
+    /// `secp256_ec_new_syscall` for secp256k1 / P-256 families).
+    /// MAY panic for BLS12-381 where the underlying subgroup check
+    /// is panic-on-failure — the calling account's transaction
+    /// reverts atomically and the security outcome is identical to
+    /// returning `false`.
+    ///
+    /// Called by the embedding account at every owner-registration
+    /// site (`execute_add_owner`, `execute_rotate_owner`,
+    /// `finalize_recovery`, `bootstrap_from_sessions` in the
+    /// reference impl) BEFORE the new owner record is committed to
+    /// storage, so a malformed pubkey cannot poison the
+    /// multi-owner / threshold pathways.
+    fn validate_pubkey(self: @TContractState, pubkey: Span<felt252>) -> bool;
 }
 ```
+
+Why this shape (rationale beyond RFC 2119):
+
+- **`verify` takes `pubkey` as a parameter** because verifier classes are stateless library-call'd code — they run in the *account's* storage context and don't carry per-deployment state. The account reads the owner's stored pubkey, passes it to the verifier, and the verifier reads zero storage. This makes verifiers independently auditable (one class hash = one curve = one implementation) and lets a single account class serve N owners on N different curves.
+- **`kind` instead of `signer_kind`** is a style change; the semantic identical to the v0.1 draft.
+- **`validate_pubkey` is mandatory** because owner registration is the only point where the account can reject a malformed key before it lands in the owner_set and poisons subsequent multi-owner / threshold flows (an off-curve BLS12-381 pubkey passes a shape-only check but bricks every threshold OE that includes that owner).
+- **`owner_commitment` is NOT in the trait** in V1; the reference implementation provides it as a free helper function (`src/signer/interface.cairo::owner_commitment`) that the account uses for address-salt derivation (Part E). Keeping it out of the trait simplifies verifier-class audit scope.
 
 **SRC-5 interface ID**:
 
@@ -135,9 +162,9 @@ ISIGNER_ID = starknet_keccak("ISigner_V1")
            = 0x94c5a761f34b25a4e603c651ac0e1fc4fad9cdb5517f7fa1bb54044c7e5ef8
 ```
 
-The canonical label is `"ISigner_V1"`. A breaking trait-shape change (e.g. adding a new required method, or changing a parameter / return type) MUST bump to `"ISigner_V2"` and register both IDs during a migration window. Non-breaking extensions MUST NOT bump the label.
+The canonical label `"ISigner_V1"` refers to the three-method trait shape defined here. Any breaking trait-shape change in a future version (adding a fourth required method, changing a parameter or return type, removing a method) MUST bump to `"ISigner_V2"` with a fresh starknet_keccak-derived ID, and the migration window MUST register both IDs during transition.
 
-Accounts MUST register `ISIGNER_ID` via SRC-5 at construction so that paymasters, wallets, and dapps can discover signer support. Reference implementation registers the ID both on native V8 deploys and inside the sessions-wallet migration path so post-upgrade accounts look identical to fresh deployments via SRC-5 probing.
+Accounts MUST register `ISIGNER_ID` via SRC-5 at construction so that paymasters, wallets, and dapps can discover signer support. The reference implementation registers the ID both on native V8 deploys and inside the sessions-wallet migration path so post-upgrade accounts look identical to fresh deployments via SRC-5 probing.
 
 ### Part B: Canonical Kind-Tag Registry
 
@@ -163,7 +190,8 @@ Compliant accounts MUST use one of the following `felt252` kind tags to identify
 | `'EIP712_SECP256K1'`     | secp256k1    | EIP-712 typed data                           | Permit2, Uniswap, OpenSea, any EIP-712-signing dapp                                                       |
 | `'DKIM_RSA'`             | RSA-2048     | Canonicalized email headers                  | Every Gmail, Outlook, iCloud, or corporate email sender that publishes DKIM (≈4-5B accounts)              |
 | `'JWT_RS256'`            | RSA-2048     | JWS compact serialization                    | Google OAuth (≈3B accounts), Microsoft/Entra ID, Okta, Auth0, enterprise SSO                              |
-| `'JWT_ES256'`            | P-256        | JWS compact serialization                    | Sign in with Apple (≈1B Apple IDs)                                                                        |
+| `'JWT_ES256'`            | P-256        | JWS compact serialization                    | Sign in with Apple (≈1B Apple IDs), single-tenant — each account stores its own per-user Apple key       |
+| `'JWT_ES256_APPLE_SUB'`  | P-256        | JWS + `poseidon(sub)` identity binding       | Sign in with Apple, multi-tenant — one Apple key serves many users; pubkey is 5 felts `[x_low, x_high, y_low, y_high, poseidon(sub_bytes)]` so a wallet provider can deploy thousands of accounts behind one Apple signing key without cross-tenant impersonation |
 
 **Tier 3 — Reserved for follow-up SNIPs:**
 
@@ -175,40 +203,74 @@ Compliant accounts MUST use one of the following `felt252` kind tags to identify
 
 ### Part C: Signature Envelope Format
 
-Owner signatures produced by an `ISigner` implementation MUST use the following envelope:
+Owner signatures arrive at the account as the `signature: Span<felt252>` parameter of `execute_from_outside_v2`. The first felt is a **version tag** that selects one of three envelope shapes. Verifier classes do not see the outer envelope — the account strips the version tag and dispatches the kind-specific payload to the registered verifier class via `library_call`.
+
+**Three envelope variants:**
 
 ```
-signature = [kind_tag, payload_0, payload_1, ..., payload_n]
+1. Single-owner V2:
+   [ SIG_VERSION_V2_SNIP12 ('V2_SNIP12'), owner_id (u32), kind_tag, ...payload ]
+
+2. Threshold V2 (N-of-M, mixed kinds across owners):
+   [ SIG_VERSION_V2_THRESHOLD ('V2_THRESHOLD'), n (u32),
+     env_1_len, owner_id_1, kind_tag_1, ...payload_1,
+     env_2_len, owner_id_2, kind_tag_2, ...payload_2,
+     ...,
+     env_n_len, owner_id_n, kind_tag_n, ...payload_n ]
+
+3. Session key (per Session Keys SNIP #163):
+   [ session_pubkey, r, s, valid_until ]
 ```
 
-where:
-- `signature[0]` is the `felt252` kind tag from Part B,
-- `signature[1..]` is the kind-specific payload (curve signature + any envelope fields).
+**Routing matrix.** Accounts MUST dispatch by `signature.len()` first, then by `signature[0]`:
 
-Verifiers MUST read the tag first and dispatch to the matching component. Verifiers MUST reject an envelope whose tag does not match `self.signer_kind()`.
+| `signature.len()` | `signature[0]` | Interpretation                                                                                |
+|-------------------|----------------|-----------------------------------------------------------------------------------------------|
+| 0                 | n/a            | Self-call (accept only if `caller == self`)                                                   |
+| 4                 | n/a            | Session-key signature (per Session Keys SNIP #163)                                            |
+| ≥ 3               | `'V2_SNIP12'`  | Single-owner V2 envelope; `owner_id = signature[1]`, `kind_tag = signature[2]`                |
+| ≥ 4               | `'V2_THRESHOLD'`| Threshold V2 envelope; `n = signature[1]`, then `n` inner envelopes consumed as length-prefixed sub-spans |
+| anything else     | any            | MUST revert                                                                                   |
 
-**Kind-specific payload layouts** (non-exhaustive; full tables in reference impl):
+**Inner-envelope verification** (both single-owner and each inner of a threshold):
+
+1. `owner_id < owner_count`; otherwise revert.
+2. Owner is not revoked; otherwise revert.
+3. **Owner has `ROLE_OWNER` role** (audit C-1 fix). Guardians and recovery-only roles MUST NOT contribute to signature validity; otherwise revert with a distinct error.
+4. `kind_tag == owners[owner_id].kind`; otherwise revert.
+5. `verifier_classes[kind_tag] != 0`; otherwise revert.
+6. Read `pubkey` from the owner's stored bytes; raise the `inside_verifier` reentrancy flag (Part F).
+7. `library_call → ISignerLibraryDispatcher::verify(message_hash, pubkey, kind_payload)`.
+8. Lower the `inside_verifier` flag.
+9. If verifier returned `false`, revert.
+
+**Threshold aggregation** (only for `V2_THRESHOLD`):
+
+10. Reject duplicate `owner_id` across the n inner envelopes.
+11. Sum `weight[owner_id_i]` across all valid envelopes.
+12. Require `sum(weight_i) >= owner_set.threshold`; otherwise revert.
+
+**Kind-specific payload layouts** (`...payload` from the envelopes above):
 
 ```
-ED25519:         [tag, Ry_low, Ry_high, s_low, s_high, msg_len, msg_bytes..., hints...]
-SECP256K1:       [tag, r_low, r_high, s_low, s_high, v]
-EIP191_SECP256K1:[tag, r_low, r_high, s_low, s_high, v]   // same as secp256k1; prefix applied in verify
-P256:            [tag, r_low, r_high, s_low, s_high]
-WEBAUTHN_P256:   [tag, r_low, r_high, s_low, s_high,
-                  auth_data_len, auth_data..., client_data_len, client_data...]
-STARK:           [tag, r, s]
-RSA_2048:        [tag, sig_limbs...]                      // 64 × u32 or 32 × u64
-JWT_RS256:       [tag, jwt_len, jwt_bytes..., sig_limbs...]
-DKIM_RSA:        [tag, header_len, header_bytes..., sig_limbs...]
+ED25519:             [Ry_low, Ry_high, s_low, s_high, msg_len, msg_bytes..., hints...]
+SECP256K1:           [r_low, r_high, s_low, s_high, v]
+EIP191_SECP256K1:    [r_low, r_high, s_low, s_high, v]
+EIP712_SECP256K1:    [r_low, r_high, s_low, s_high, v]
+P256:                [r_low, r_high, s_low, s_high]
+WEBAUTHN_P256:       [r_low, r_high, s_low, s_high,
+                      auth_data_len, auth_data..., client_data_len, client_data...]
+JWT_ES256:           [r_low, r_high, s_low, s_high,
+                      jwt_len, jwt_bytes..., y_parity, challenge_offset]
+JWT_ES256_APPLE_SUB: [r_low, r_high, s_low, s_high,
+                      jwt_len, jwt_bytes..., y_parity, challenge_offset,
+                      sub_offset, sub_len]
+STARK:               [r, s]
+RSA_2048:            [sig_limbs...]                          // 64 × u32 or 32 × u64
+JWT_RS256:           [jwt_len, jwt_bytes..., sig_limbs...]
+DKIM_RSA:            [header_len, header_bytes..., sig_limbs...]
+BLS12_381:           [sig_compressed_len, sig_compressed..., precomputed_lines...]
 ```
-
-**Coexistence with the Session Keys SNIP** (merged via [starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163)). Session signatures in the 4-element `[session_pubkey, r, s, valid_until]` form are distinguishable from owner envelopes because kind tags are ASCII short-strings and session_pubkey values are never valid short-strings. Accounts MUST still route by `signature.len()` as the primary discriminator:
-
-| `signature.len()` | Interpretation                                              |
-|-------------------|-------------------------------------------------------------|
-| 0                 | Self-call (accept only if `caller == self`)                 |
-| 4                 | Session-key signature (per Session Keys SNIP)               |
-| ≥ 1, ≠ 4          | Owner envelope; dispatch on `signature[0]` kind tag         |
 
 ### Part D: Integration with SNIP-9 V2 (Outside Execution)
 
@@ -236,17 +298,28 @@ salt = poseidon([signer_kind, owner_commitment])
 
 This guarantees that the same underlying key material (for example, a Secp256k1 key that was re-encoded as an RSA public exponent) deployed under two different kinds yields two distinct Starknet addresses.
 
-### Part F: Component Architecture (Non-Normative, Recommended)
+### Part F: Library-Call Dispatch Architecture (Non-Normative, Recommended)
 
-The reference implementation provides one Cairo component per kind (`ed25519/component.cairo`, `secp256k1/component.cairo`, etc.), each implementing the `ISigner` trait via a `HasOwnerKey` trait that the embedding account implements. This mirrors the component architecture established by the Session Keys SNIP ([starknet-io/SNIPs#163](https://github.com/starknet-io/SNIPs/pull/163)) and has **zero OpenZeppelin dependencies** — any account framework can embed these components.
+The reference implementation does **not** embed verifier logic as in-class Cairo components. Instead, each kind is a separately-declared **verifier class** that the account loads on demand via `library_call_syscall`. The account stores `verifier_classes: Map<felt252, ClassHash>` (`kind_tag → verifier_class_hash`), and the dispatch site (`src/account.cairo:463-473`) reads the registered class hash, builds an `ISignerLibraryDispatcher`, and calls `verify(message_hash, pubkey, payload)` against it. Verifier classes hold no storage of their own — the dispatcher runs in the *account's* storage context but the verifier itself only reads its three call parameters.
+
+This is a deliberate departure from the Cairo-component pattern used by the Session Keys SNIP. Three reasons:
+
+1. **One account class, many curves.** With component embedding, every kind an account supports adds bytes to that account's class hash — Argent + Phantom + passkey would be three different account classes. With library_call dispatch, a single audited `ShhhAccount` class serves N kinds; adding a new curve declares one new verifier class and (under governance) registers it. No account redeploy, no fresh address derivation, no fresh audit of the orchestration logic.
+2. **Independently auditable verifiers.** Each verifier class is one Sierra binary that implements one curve. The audit scope of `Ed25519Verifier` is "does Garaga's `is_valid_eddsa_signature` get fed the right inputs and is the envelope fully consumed" — nothing more. The orchestration code that decides *whether* to call a verifier lives in the account class and is audited once.
+3. **Governance-rotatable.** A vulnerability in a single curve's verifier is fixed by declaring a patched verifier class and proposing `add_verifier_class(kind_tag, new_class_hash)` through the same timelocked governance path (`ADD_VERIFIER_CLASS`, 48h timelock, unanimous owner approval in the reference). Existing accounts pick up the fix on their next signature without redeploying. The `verifier_classes` map is the explicit governance-rotatable seam; absent it, every kind upgrade would force a fresh account address and a manual fund migration.
 
 Wallets integrate in five steps:
 
-1. Add `component!()` for the desired signer component(s).
-2. Wire `self.signer.verify(...)` in `__validate__` (or `is_valid_signature`).
-3. Register `ISIGNER_ID` and the kind-specific SRC-5 ID at construction.
-4. Implement the `HasOwnerKey` trait for your account's storage layout.
-5. Use the salt rule in Part E for deterministic addresses.
+1. **Declare the verifier classes** for the kinds your account will support (or reuse already-declared ones — see the reference impl's `docs/class-hashes.md` for live mainnet class hashes).
+2. **Store `verifier_classes: Map<felt252, ClassHash>`** in your account storage and seed it at construction with the kinds the deploying user authorizes.
+3. **At every signature-check site**, look up `class_hash = verifier_classes[kind_tag]`, build `ISignerLibraryDispatcher { class_hash }`, and call `verify(message_hash, pubkey, payload)`. Revert if `class_hash` is zero or the dispatcher returns `false`. Wrap the call in a reentrancy flag (the reference impl uses `inside_verifier`) so a malicious verifier class cannot syscall back into the owner-mutation API mid-verify.
+4. **At every owner-registration site** (initial deploy, add_owner, rotate_owner, finalize_recovery), look up the same class hash and call `validate_pubkey(pubkey)` before committing the owner record to storage. This is the M-1 / M-2 guard from the 2026-05-10 audit cycle — without it, an off-curve pubkey can be planted in the owner set and used to brick threshold flows.
+5. **Register `ISIGNER_ID` + the kind-specific SRC-5 ID** at construction (Part G), and use the address-salt rule in Part E so the kind is bound into the deterministic address.
+
+Verifier-class governance interacts with the rest of the account in two non-obvious ways implementers MUST handle:
+
+- **Removing a verifier class while an owner of that kind still exists** strands that owner. The reference impl requires `REMOVE_VERIFIER` to additionally pass an invariant: no active owner record references the removed kind tag.
+- **Rotating a verifier class hash** changes the binary that interprets stored pubkey bytes. The reference impl forbids in-place rotation when the new verifier reports a different pubkey schema (`validate_pubkey` MUST accept the same stored bytes); a curve migration with a different pubkey schema requires registering a new kind tag (`'ED25519_V2'`) and migrating owners one at a time through the timelocked owner-rotation path.
 
 ### Part G: SRC-5 Discovery
 
@@ -257,13 +330,13 @@ Accounts MUST register:
 - `ISIGNER_ID` (this SNIP)
 - A kind-specific SRC-5 ID (`ISIGNER_ED25519_ID`, `ISIGNER_SECP256K1_ID`, etc.) for precise discovery
 
-Paymasters and dapps MUST probe `ISIGNER_ID` first, then call `signer_kind()` to confirm the concrete curve before constructing a signature.
+Paymasters and dapps MUST probe `ISIGNER_ID` first, then read the per-owner `kind` from the account's owner-set view (or call the verifier class's `kind()` directly via SNIP-5 discovery on the registered verifier class hash) to confirm the concrete curve before constructing a signature.
 
 ## Rationale
 
 ### Why a single trait instead of curve-specific interfaces
 
-Every curve needs the same three operations: verify, identify the owner, identify the curve. A single trait means paymasters and SDKs write one dispatcher, not six.
+Every curve needs the same three operations: verify a signature, declare the curve it implements, and reject malformed pubkeys before they reach storage. A single trait means paymasters and SDKs write one dispatcher, not six, and the account orchestration code that decides *when* to call those operations is identical across kinds.
 
 ### Why kind-tag envelopes instead of per-class contracts
 
@@ -290,16 +363,18 @@ Without salt binding, a key re-encoded across curves could map to the same addre
 
 ## Security Considerations
 
-1. **Envelope malleability**: verifiers MUST reject a signature whose kind tag does not match `self.signer_kind()`. An account that accepts envelopes for a kind it does not store is an attack surface.
+1. **Envelope malleability**: accounts MUST reject any inner envelope whose `kind_tag` does not match the stored `kind` of `owners[owner_id]` (Part C inner-envelope verification step 4). A verifier class itself MAY additionally cross-check its own `kind()` return value against the dispatched kind tag, but the account-level check is the authoritative guard. An account that accepts envelopes for a kind it does not store is an attack surface.
 2. **Trailing data**: verifiers MUST confirm the envelope deserializer consumed the entire payload (Shhh audit M-4). Trailing felts after a valid structure MUST be rejected.
 3. **Curve subversion**: for Ed25519 and BLS, verifiers MUST follow the reference implementation's handling of small-subgroup / torsion points. For RSA, public exponents MUST be fixed (65537 RECOMMENDED) and never read from the signature.
 4. **Message binding**: `verify()` operates on a pre-computed `message_hash`. Integrations MUST NOT call `verify()` with a hash that is not bound to the execution context (nonce, chain id, caller, calls). SNIP-12 typed data is the recommended hash.
 5. **Kind squatting**: kind tags outside the canonical registry in Part B SHOULD be rejected by paymasters and SDKs. The registry is the authoritative list.
 6. **Key-validation on deploy**: constructors MUST validate that the supplied key material is in-range for the chosen curve (Shhh audit L-1). Out-of-range values create bricked accounts.
+7. **Verifier-class reentrancy**: because `library_call_syscall` runs the verifier in the *account's* storage context, a malicious verifier class can attempt to syscall back into the account's owner-mutation API mid-verify. Accounts MUST raise a reentrancy flag (the reference impl uses `inside_verifier`) around every `library_call → verify` and `library_call → validate_pubkey` site, and every owner-mutation entry point MUST assert the flag is unset. Reentrancy guards on `verify` alone are insufficient — `validate_pubkey` is called at owner-registration time and is equally exposed (audit M-1, 2026-05-10).
+8. **Verifier-class rotation governance**: adding or rotating an entry in `verifier_classes` is a privileged operation. Implementations MUST gate `add_verifier_class` / `remove_verifier_class` behind the same governance path that gates owner changes (the reference impl uses a 48-hour timelock with unanimous owner approval for `ADD_VERIFIER_CLASS`). Removing a verifier class whose kind tag is still referenced by an active owner MUST be rejected. Rotating to a verifier with an incompatible pubkey schema MUST require a fresh kind tag, not in-place replacement (Part F).
 
 ## Reference Implementation
 
-The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo), branch `v8-robust`, pinned at commit **`6c30576`** (Phase 10 exit). V8 deploys a single `ShhhAccount` class that dispatches signature verification to four separately-declared verifier classes via `library_call_syscall`:
+The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://github.com/haycarlitos/shhh-wallet-cairo), branch `v8-robust`, pinned at commit **`af45e95`** (V8.3, declared on Starknet mainnet 2026-05-11). V8.3 deploys a single `ShhhAccount` class that dispatches signature verification to ten separately-declared verifier classes via `library_call_syscall`:
 
 | Kind tag             | Verifier class               | Primitive used                                                                |
 |----------------------|------------------------------|-------------------------------------------------------------------------------|
@@ -316,14 +391,22 @@ The reference implementation lives at [`haycarlitos/shhh-wallet-cairo`](https://
 
 Cross-language fixtures (`@noble/ed25519`, `ethers.js`, `@noble/curves`) sign one canonical SNIP-12 hash across all four curves so the audit surface is "one hash, four verifiers, one envelope shape."
 
-Verification evidence on commit `6c30576`:
+Verification evidence on commit `af45e95`:
 
 - **`scarb build`** — green under Scarb 2.14, Cairo 2.14, Sierra 1.7
 - **`scarb fmt --check`** — clean
-- **`snforge test`** — 211 passed, 0 failed, 0 ignored (includes 9 BLS12-381 happy-path + edge-case regressions)
+- **`snforge test`** — 242 passed, 0 failed, 0 ignored (includes 9 BLS12-381 happy-path + edge-case regressions plus the M-1 / M-2 / M-3 negative regressions from the 2026-05-10 V8.2 audit, executed against the `EvilReentrantVerifier` / `EvilReturnTrueVerifier` / `EvilPanicVerifier` test helpers).
 - **Mutation testing** (`scripts/mutation-test.sh`) — 10 of 10 mutants killed; no documented gaps
 - **Fuzz testing** — 7 `#[fuzzer]` tests × 256 runs = 1792 random sweeps across authorization, timelock, and M-3 bounds
-- **Mainnet declared** — ten classes declared on Starknet mainnet (six initial classes on 2026-04-28; on 2026-05-05: `EIP191Secp256k1Verifier`, `EIP712Secp256k1Verifier`, `JwtES256AppleVerifier`, `JwtES256AppleSubVerifier`). Every class hash matches its deterministic prediction byte-for-byte. Total declare cost across the ten classes: 134.88 STRK.
+- **Mainnet declared** — 14 V8.x classes declared on Starknet mainnet:
+  - 2026-04-28: initial 6 (V8.0 `ShhhAccount` + 5 verifier classes)
+  - 2026-05-05: +4 verifier classes (`EIP191Secp256k1Verifier`, `EIP712Secp256k1Verifier`, `JwtES256AppleVerifier`, `JwtES256AppleSubVerifier`)
+  - 2026-05-06: +1 (`Bls12_381MinSigVerifier`)
+  - 2026-05-07: V8.1 `ShhhAccount` redeclare (audit closeout against the 2026-05-07 self-review)
+  - 2026-05-10: V8.2 redeclare of `ShhhAccount` + all 10 verifier classes (full M-1 closure via `validate_pubkey` on the `ISigner` trait — trait-shape change forced fresh hashes for every class)
+  - 2026-05-11: V8.3 `ShhhAccount` redeclare (audit closeout against the 2026-05-10 V8.2 self-review — H-1 `finalize_recovery`, M-1 `inside_verifier` symmetry, M-2 `bootstrap_from_sessions`, M-3 evil-verifier negative tests). Verifier class hashes unchanged from V8.2.
+
+  Active classes for new deploys: V8.3 `ShhhAccount` + 10 V8.2 verifier classes. V8.0 / V8.1 / V8.2 `ShhhAccount` remain declared for legacy recognition and are deprecated. Every class hash matches its deterministic prediction byte-for-byte. Cumulative declare cost across the 14 classes: ~283 STRK. Live class-hash table maintained in [`docs/class-hashes.md`](./class-hashes.md).
 
 The V8 codebase incorporates the twelve findings from the [2026-04-20 Codex/Cairo audit](https://gist.github.com/omarespejel/dddcc2b7df4e8b8bb47af9d1936f8a3e) as regression tests. Each audit finding has a dedicated `test_*` that fires the guard on real contract code — the audit history is reviewable in the commit log (Phase 0 → Phase 10).
 
@@ -349,8 +432,8 @@ Reference test suites for a compliant implementation MUST include, per kind:
 
 Cross-kind tests:
 
-- Two accounts with identical raw key bytes but different `signer_kind` MUST yield different addresses (Part E).
-- An envelope with kind tag `X` submitted to an account with `signer_kind() = Y` MUST revert.
+- Two accounts with identical raw key bytes but different `primary_kind` MUST yield different addresses (Part E).
+- An envelope with `kind_tag = X` submitted against an owner whose stored `kind = Y` MUST revert before reaching `library_call`.
 - The 4-element session-key envelope MUST be correctly dispatched to the session-key path, not to owner verification.
 
 ## Acknowledgments
