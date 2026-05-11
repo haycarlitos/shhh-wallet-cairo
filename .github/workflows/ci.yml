@@ -19,7 +19,7 @@ jobs:
       - name: Install Starknet Foundry
         uses: foundry-rs/setup-snfoundry@v3
         with:
-          starknet-foundry-version: "0.56.0"
+          starknet-foundry-version: "0.59.0"
 
       - name: scarb build
         run: scarb build
