@@ -31,4 +31,4 @@ jobs:
         run: snforge test
 
       - name: Audit regression gate
-        run: snforge test --filter audit_2026_04_20
+        run: snforge test audit_2026_04_20
