@@ -6,3 +6,5 @@ scripts/ts/package-lock.json
 # Local-only working files: planning docs, PR templates, frontend SDK.
 # Kept on disk for the maintainer; not part of the public V8 contribution.
 _internal/
+snip-108-forum-draft.md
+docs/chipi-handover.md
