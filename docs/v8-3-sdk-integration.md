@@ -430,7 +430,7 @@ Each verifier consumes a different envelope payload. Below is the spec for each,
 
 ### 9.1 STARK ECDSA — `'STARK'`
 
-Native Starknet wallets (Argent, Braavos, Ledger). Used for **primary owner = STARK** and any STARK secondary owners.
+Native Starknet wallets (Ready, Braavos, Ledger). Used for **primary owner = STARK** and any STARK secondary owners.
 
 **Pubkey** (1 felt): `[pk_x]`
 
@@ -563,7 +563,7 @@ function buildSecp256k1Envelope(args: {
 
 ### 9.4 EIP-191 `personal_sign` — `'EIP191_SECP256K1'`
 
-**This is the MetaMask-compat path.** Every EVM wallet (Rabby, Coinbase Wallet, Trust, etc.) supports `personal_sign` natively — no Snap, no plugin, no Argent install.
+**This is the MetaMask-compat path.** Every EVM wallet (Rabby, Coinbase Wallet, Trust, etc.) supports `personal_sign` natively — no Snap, no plugin, no Ready install.
 
 **Pubkey** (4 felts): `[x_low, x_high, y_low, y_high]` — secp256k1 pubkey of the EVM address.
 

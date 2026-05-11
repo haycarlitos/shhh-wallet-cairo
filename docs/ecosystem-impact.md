@@ -2,7 +2,7 @@
 
 Concrete, no-buzzword summary of what the seven V8 classes declared on
 mainnet (2026-04-28 + 2026-05-05) make possible. Audience: Cifra
-integrators, wallet infra providers (Chipi Pay, Privy, Cavos, Argent),
+integrators, wallet infra providers (Chipi Pay, Privy, Cavos, Ready),
 and Starknet ecosystem reviewers.
 
 ## TL;DR
@@ -16,7 +16,7 @@ What's live on Starknet mainnet right now (2026-05-05), via class
 hashes in [`class-hashes.md`](./class-hashes.md):
 
 - `ShhhAccount` — the account class
-- `StarkVerifier` — Argent, Braavos, Ledger Starknet app, native
+- `StarkVerifier` — Ready, Braavos, Ledger Starknet app, native
 - `Ed25519Verifier` — Phantom, Solflare, every Solana wallet
 - `Secp256k1Verifier` — raw secp256k1 (hardware wallets exposing
   low-level signing)
@@ -88,7 +88,7 @@ Things a developer who picks up V8 doesn't have to build:
 2. **Wallet connection lifecycle** — the existing kits each ecosystem
    already ships handle this: wagmi or viem for MetaMask,
    `@solana/wallet-adapter` for Phantom, the browser's native WebAuthn
-   API for passkeys, `starknet-react` / `get-starknet` for Argent and
+   API for passkeys, `starknet-react` / `get-starknet` for Ready and
    Braavos. Dev keeps these as is.
 
 3. **Signature → envelope conversion** — a small adapter (30 to 100

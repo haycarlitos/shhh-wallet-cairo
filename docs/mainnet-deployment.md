@@ -70,7 +70,7 @@ order of magnitude; mileage varies with `l2_gas_price` at the time.
 
 | Curve                     | l2_gas (snforge) | STRK (est.) | USD (est.) | Wallets that use this kind |
 |---------------------------|-----------------:|------------:|-----------:|----------------------------|
-| STARK ECDSA               | ~12 M            | ~0.38       | ~$0.014    | Argent, Braavos, native Starknet |
+| STARK ECDSA               | ~12 M            | ~0.38       | ~$0.014    | Ready, Braavos, native Starknet |
 | Ed25519 (Garaga)          | ~28 M            | ~0.89       | ~$0.034    | Phantom, Solflare, every Solana wallet |
 | Raw secp256k1 (recovery)  | ~15 M            | ~0.47       | ~$0.018    | Hardware wallets exposing low-level signing |
 | EIP-191 secp256k1         | ~18 M            | ~0.57       | ~$0.022    | MetaMask, Rabby, WalletConnect (`personal_sign` popup) |

@@ -83,7 +83,7 @@ trait IShhhRecovery<TContractState> {
 
 const TIMELOCK_ADD_OWNER: u64 = 172_800; // 48h
 const TIMELOCK_REMOVE_OWNER: u64 = 86_400; // 24h
-const TIMELOCK_RECOVERY: u64 = 604_800; // 7d — Argent-aligned
+const TIMELOCK_RECOVERY: u64 = 604_800; // 7d — Ready-aligned
 
 // --------------------------------------------------------------
 // Fixture helpers

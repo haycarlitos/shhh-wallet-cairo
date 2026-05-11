@@ -47,7 +47,7 @@ pub const TIMELOCK_ADD_VERIFIER: u64 = 172_800; // 48h
 pub const TIMELOCK_REMOVE_VERIFIER: u64 = 86_400; // 24h
 pub const TIMELOCK_ADD_GUARDIAN: u64 = 86_400; // 24h
 pub const TIMELOCK_REMOVE_GUARDIAN: u64 = 86_400; // 24h
-pub const TIMELOCK_RECOVERY: u64 = 604_800; // 7d — Argent-aligned
+pub const TIMELOCK_RECOVERY: u64 = 604_800; // 7d — Ready-aligned
 
 // ------------------------------------------------------------------
 // Pending operation record
