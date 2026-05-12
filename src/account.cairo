@@ -982,12 +982,103 @@ pub mod ShhhAccount {
         // any address watching the mempool could race the upgrade tx and
         // call `bootstrap_from_sessions(attacker_pk, …)` first, seizing
         // the account before the legitimate owner's bootstrap arrives.
+        //
+        // Stranded-state recovery (V8.4): if the OLD class's multicall is
+        // non-atomic (chipi-pay/sessions-smart-contract is — see
+        // `_execute_calls` in that repo, which swallows subcall errors at
+        // a `Result::Err(_) => res.append(array![].span())` site), the
+        // upgrade syscall can take effect while this call silently reverts
+        // and leaves the account stranded at V8.3 with primary_kind == 0.
+        // In that case use `bootstrap_from_sessions_signed` below — it
+        // accepts a STARK signature from `public_key` over a canonical
+        // bootstrap message bound to this account's address, so anyone
+        // can re-trigger initialization (typically the original owner
+        // themselves via a non-self relay or sponsor) without needing
+        // a self-call channel.
         _assert_self_call(@self);
-        // One-shot gate: V8 primary owner is frozen for the life of the
-        // account. Trying to rebootstrap an already-initialized account
-        // is an invariant violation.
-        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
+        _initialize_v8_from_sessions(ref self, public_key, stark_verifier_class, label);
+    }
 
+    /// Stranded-state recovery for the V8.0/V8.1/V8.2/V8.3 migration path
+    /// (V8.4, audit-trail item from the 2026-05-12 review).
+    ///
+    /// Used ONLY when the sessions-contract upgrade tx left the account at
+    /// the V8.3 class with `primary_kind == 0` — i.e., the upgrade syscall
+    /// succeeded but the bundled bootstrap call reverted silently because
+    /// the OLD class's OE multicall is non-atomic. The wallet at that
+    /// point has no owners and no signature path to recover via
+    /// `bootstrap_from_sessions` (which requires `_assert_self_call`).
+    ///
+    /// This entry point accepts a STARK ECDSA signature from `public_key`
+    /// over `bootstrap_recovery_hash(public_key, stark_verifier_class,
+    /// label)`. The canonical hash binds:
+    ///   - A domain-separator tag ('SHHH_BOOTSTRAP_V8_4') so the signature
+    ///     cannot be reused across protocols.
+    ///   - The account's own `get_contract_address()` so the signature
+    ///     cannot be replayed on a different stranded V8.3 wallet.
+    ///   - `public_key` so a frontrunner cannot substitute their own key
+    ///     and re-broadcast the same signature.
+    ///   - `stark_verifier_class` so a frontrunner cannot point the kind
+    ///     dispatch at a malicious verifier.
+    ///   - `label` so storage layout matches the original bootstrap intent.
+    ///
+    /// The frontrunner threat from H-1 (mempool watcher tries to seize
+    /// the account between upgrade and bootstrap) is closed by the
+    /// signature itself: an attacker without `public_key`'s private key
+    /// cannot produce a valid signature, and the canonical message commits
+    /// to every parameter so a captured signature cannot be re-bound.
+    /// A frontrunner that submits the legitimate signed tx with the same
+    /// parameters simply relays the intended bootstrap — not an attack.
+    ///
+    /// One-shot: same `primary_kind == 0` gate as the happy path.
+    #[external(v0)]
+    fn bootstrap_from_sessions_signed(
+        ref self: ContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) {
+        // No _assert_self_call — the whole point of this entry point is to
+        // be usable from a non-self caller when the wallet is stranded.
+        // Authorization is the signature check below.
+        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
+        assert(public_key != 0, 'MIG: public_key is zero');
+        let verifier_felt: felt252 = stark_verifier_class.into();
+        assert(verifier_felt != 0, 'MIG: verifier class zero');
+
+        // Canonical bootstrap message. Domain-separator + account_address
+        // + every parameter we're about to write to storage.
+        let bootstrap_msg = core::poseidon::poseidon_hash_span(
+            array![
+                'SHHH_BOOTSTRAP_V8_4', starknet::get_contract_address().into(), public_key,
+                verifier_felt, label,
+            ]
+                .span(),
+        );
+        assert(
+            core::ecdsa::check_ecdsa_signature(bootstrap_msg, public_key, signature_r, signature_s),
+            'MIG: bad bootstrap signature',
+        );
+
+        _initialize_v8_from_sessions(ref self, public_key, stark_verifier_class, label);
+    }
+
+    /// Shared initialization between `bootstrap_from_sessions` (self-call
+    /// happy path) and `bootstrap_from_sessions_signed` (stranded-state
+    /// recovery). Caller is responsible for authorization — either via
+    /// `_assert_self_call` or via the canonical-message signature check.
+    fn _initialize_v8_from_sessions(
+        ref self: ContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+    ) {
+        // Defensive: re-assert the one-shot gate. Both callers also assert
+        // this earlier so they get a distinct revert string, but if a
+        // future entry point forgets the assertion this catches it.
+        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
         assert(public_key != 0, 'MIG: public_key is zero');
         let verifier_felt: felt252 = stark_verifier_class.into();
         assert(verifier_felt != 0, 'MIG: verifier class zero');
@@ -1184,7 +1275,8 @@ pub mod ShhhAccount {
                     || sel == selector!("initiate_recovery")
                     || sel == selector!("cancel_recovery")
                     || sel == selector!("finalize_recovery")
-                    || sel == selector!("bootstrap_from_sessions") {
+                    || sel == selector!("bootstrap_from_sessions")
+                    || sel == selector!("bootstrap_from_sessions_signed") {
                     return false;
                 }
             }
