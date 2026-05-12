@@ -250,7 +250,7 @@ Owner signatures arrive at the account as the `signature: Span<felt252>` paramet
 11. Sum `weight[owner_id_i]` across all valid envelopes.
 12. Require `sum(weight_i) >= owner_set.threshold`; otherwise revert.
 
-**Selector-scoped role relaxation (non-normative, RECOMMENDED for accounts that support guardian recovery).** Step 3 above MAY be relaxed for a closed set of single-call selectors known at the account-class level. The reference implementation relaxes the check exactly for `initiate_recovery` and ONLY when all of these are simultaneously true:
+**Selector-scoped role relaxation (non-normative, RECOMMENDED for accounts that support guardian recovery).** Step 3 above MAY be relaxed for a closed set of single-call selectors known at the account-class level. **Critically: the relaxation NEVER extends to threshold envelopes (`V2_THRESHOLD`)** — every inner of a threshold MUST still satisfy `ROLE_OWNER`, regardless of the selector being called. Multi-guardian recovery flows (M-of-N guardians) are explicitly out of scope for this SNIP. The reference implementation relaxes the single-owner V2 check exactly for `initiate_recovery` and ONLY when all of these are simultaneously true:
 
 - The OE's `calls` field contains exactly one call (`len == 1`).
 - That call's `to` address equals the account itself (`get_contract_address()`).

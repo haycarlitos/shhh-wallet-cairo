@@ -1139,8 +1139,25 @@ pub mod ShhhAccount {
 
     /// Shared initialization between `bootstrap_from_sessions` (self-call
     /// happy path) and `bootstrap_from_sessions_signed` (stranded-state
-    /// recovery). Caller is responsible for authorization — either via
-    /// `_assert_self_call` or via the canonical-message signature check.
+    /// recovery).
+    ///
+    /// **INVARIANT — CALLER MUST AUTHORIZE BEFORE INVOKING.** This helper
+    /// does NOT perform any caller-identity check. The two current
+    /// callers each handle authorization themselves:
+    ///   - `bootstrap_from_sessions` gates on `_assert_self_call` (only
+    ///     the account itself, called inside an atomic OE multicall).
+    ///   - `bootstrap_from_sessions_signed` gates on the preserved-pubkey
+    ///     match (audit C-1) plus a STARK ECDSA signature under that
+    ///     pubkey over the canonical bootstrap message.
+    ///
+    /// The defensive re-checks below (`primary_kind == 0`,
+    /// `public_key != 0`, `verifier_felt != 0`) verify PARAMETER VALIDITY
+    /// only — they do NOT replace authorization. If a future entry point
+    /// is added that calls this helper, that entry point MUST install its
+    /// own authorization gate before delegating. The audit-2026-05-12
+    /// Informational finding on this helper recommended an enum-based
+    /// `AuthProof` pattern; the comment here is the lighter-weight
+    /// equivalent until a third caller exists.
     fn _initialize_v8_from_sessions(
         ref self: ContractState,
         public_key: felt252,
