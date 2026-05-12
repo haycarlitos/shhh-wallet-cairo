@@ -1356,8 +1356,20 @@ pub mod ShhhAccount {
         // — `proposer` is the first felt of calldata. Require it match
         // the OE signer's owner_id so a guardian can only initiate on
         // their own behalf.
+        //
+        // V8.4 audit L-1 (2026-05-12): require the well-formed Serde
+        // minimum (7 felts: proposer + kind + pubkey_bytes_len + ≥1
+        // pubkey felt + role + weight + label). Without this floor the
+        // helper would accept truncated calldata; the OE then proceeds
+        // to call_contract_syscall, and safety relies on
+        // _execute_calls_atomic_span panicking with 'H1: subcall
+        // failed' when Serde deserialization fails inside
+        // initiate_recovery. The coupling is fragile — a future
+        // change that catches Serde errors more leniently would let
+        // a malformed initiate_recovery reach the recovery component
+        // with default-zero fields. Defense-in-depth check here.
         let calldata: Span<felt252> = *call.calldata;
-        if calldata.len() == 0_u32 {
+        if calldata.len() < 7_u32 {
             return false;
         }
         let proposer_felt: felt252 = (*calldata.at(0));

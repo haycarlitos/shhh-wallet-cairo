@@ -306,6 +306,47 @@ fn test_v8_4_guardian_oe_rejects_multiple_calls() {
 }
 
 // ==========================================================
+// V8.4 audit L-1 (2026-05-12) — predicate rejects truncated calldata.
+//
+// Before the L-1 fix, the helper accepted `calldata.len() >= 1` (just
+// the proposer felt). The carve-out fired, the OE proceeded to
+// _execute_calls_atomic_span, the syscall to initiate_recovery
+// reverted at Serde deserialization, and the OE wrapped it as
+// 'H1: subcall failed'. Safety relied on _execute_calls_atomic_span's
+// panic-on-error behavior. The L-1 fix tightens the helper to require
+// calldata.len() >= 7 (the well-formed Serde minimum), so the
+// rejection happens at the role-relaxation gate with the original
+// 'SHHH: signer not an owner' error — never reaches the syscall.
+// ==========================================================
+
+#[test]
+#[should_panic(expected: 'SHHH: signer not an owner')]
+fn test_v8_4_audit_l1_guardian_oe_rejects_truncated_initiate_recovery() {
+    let (account, guardian_id) = deploy_account_with_guardian();
+    // Calldata: only the proposer felt, no other args. The carve-out
+    // helper rejects calldata.len() < 7, falling through to the
+    // original ROLE_OWNER role assertion, which a guardian fails.
+    let calldata: Array<felt252> = array![guardian_id.into()];
+    let call = Call {
+        to: account, selector: selector!("initiate_recovery"), calldata: calldata.span(),
+    };
+    let oe = OutsideExecution {
+        caller: 'ANY_CALLER'.try_into().unwrap(),
+        nonce: 'trunc-nonce',
+        execute_after: 1_000_000,
+        execute_before: 1_000_000 + 3_600,
+        calls: array![call].span(),
+    };
+    let hash = compute_snip12_hash(@oe, account.into(), 'SN_MAIN');
+    let guardian_kp = StarkCurveKeyPairImpl::from_secret_key(GUARDIAN_SECRET);
+    let (r, s) = guardian_kp.sign(hash).unwrap();
+    let envelope: Array<felt252> = array![SIG_VERSION_V2_SNIP12, guardian_id.into(), 'STARK', r, s];
+    cheat_oe_caller(account);
+    let src9 = ISRC9_V2Dispatcher { contract_address: account };
+    src9.execute_from_outside_v2(oe, envelope.span());
+}
+
+// ==========================================================
 // Regression: owner OE that calls initiate_recovery still works.
 // The V8.4 carve-out adds a path for guardians; it does NOT change
 // any existing owner-OE behavior. Owners can still bundle
