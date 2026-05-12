@@ -65,6 +65,32 @@ pub mod ShhhAccount {
     /// Owner-envelope header min length: [version_tag, owner_id, kind_tag].
     pub const OE_OWNER_ENVELOPE_HEADER_LEN: u32 = 3;
 
+    /// Storage slot of the OZ AccountComponent's `Account_public_key`
+    /// field on the legacy sessions-smart-contract class. Read by
+    /// `bootstrap_from_sessions_signed` (V8.4, audit C-1 fix) to bind
+    /// the supplied `public_key` to the preserved sessions owner.
+    ///
+    /// **ABI-tied to OZ AccountComponent v3.0.0** — verified against
+    /// `github.com/OpenZeppelin/cairo-contracts` tag `v3.0.0`,
+    /// `packages/account/src/account.cairo`, which declares
+    /// `pub Account_public_key: felt252` inside `AccountComponent::Storage`.
+    /// Substorage v0 places this field at the top-level slot keyed by
+    /// `selector!("Account_public_key")`.
+    ///
+    /// **Maintenance contract**: if `Scarb.toml`'s `openzeppelin` git
+    /// tag is bumped past `v3.0.0`, the OZ source MUST be re-verified
+    /// against this constant before merge. A rename in OZ (e.g., to
+    /// `public_key` without the `Account_` prefix, or to a different
+    /// substorage layout in v4.0.0+) silently breaks
+    /// `bootstrap_from_sessions_signed` for any sessions wallet minted
+    /// off the newer OZ class — the slot read returns zero, the
+    /// 'MIG: no legacy pk' branch fires, and stranded-state recovery
+    /// is permanently unreachable for those wallets. The error fail-
+    /// closes safely (no takeover surface), but legitimate users
+    /// cannot recover. Treat any OZ bump as gated on re-verifying
+    /// this slot.
+    pub const LEGACY_OZ_ACCOUNT_PUBKEY_SLOT: felt252 = selector!("Account_public_key");
+
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
     component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
@@ -1091,12 +1117,13 @@ pub mod ShhhAccount {
 
         // (1) Bind to the preserved sessions-smart-contract owner pubkey.
         //
-        // OZ AccountComponent (v3.0.0) declares the storage field as
-        // `pub Account_public_key: felt252` — see
-        // `openzeppelin_account::AccountComponent::Storage` at
-        // `github.com/OpenZeppelin/cairo-contracts` tag `v3.0.0`,
-        // `packages/account/src/account.cairo`. Substorage v0 places this
-        // at a top-level slot keyed by `selector!("Account_public_key")`.
+        // The slot we read (`LEGACY_OZ_ACCOUNT_PUBKEY_SLOT`) is the
+        // top-level storage address of OZ AccountComponent v3.0.0's
+        // `Account_public_key` field. It's defined as a module-level
+        // const above (search for `LEGACY_OZ_ACCOUNT_PUBKEY_SLOT`) so
+        // the OZ-version dependency is named, documented, and
+        // single-point-of-update. See the const's docstring for the
+        // maintenance contract on OZ version bumps.
         //
         // The sessions class writes this slot at constructor time. After
         // `replace_class_syscall` to V8.4, storage persists; the slot
@@ -1104,17 +1131,19 @@ pub mod ShhhAccount {
         // (domain 0) and require equality with the supplied `public_key`.
         //
         // Edge cases:
-        //   - slot is 0 (legacy class didn't use OZ Account, or wallet
-        //     deployed with public_key=0): revert with 'MIG: no legacy pk'
-        //     — recovery via this entry point is impossible for such
-        //     wallets, which is correct (there was no legitimate
-        //     authorization anchor to bind to in the first place).
+        //   - slot is 0 (legacy class didn't use OZ AccountComponent at
+        //     this slot, OR OZ renamed the field in a future version and
+        //     the const is stale): revert with 'MIG: no legacy pk' —
+        //     recovery via this entry point is unreachable for such
+        //     wallets, which fails closed safely (no takeover surface)
+        //     but means legitimate users of newer OZ versions cannot
+        //     recover via this path until the const is re-verified.
         //   - slot is non-zero but != public_key: revert with
         //     'MIG: pk mismatch' — the supplied pubkey doesn't match the
         //     preserved legacy owner; either the caller is an attacker
         //     with a fresh keypair (audit C-1) or the wallet's legacy
         //     class used a different slot for the owner key.
-        let slot_address: starknet::storage_access::StorageAddress = selector!("Account_public_key")
+        let slot_address: starknet::storage_access::StorageAddress = LEGACY_OZ_ACCOUNT_PUBKEY_SLOT
             .try_into()
             .expect('MIG: bad slot address');
         let preserved_slot = starknet::syscalls::storage_read_syscall(0, slot_address).unwrap();
