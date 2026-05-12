@@ -450,7 +450,23 @@ pub mod ShhhAccount {
             // co-owner with full drain authority — the role distinction
             // was enforced only at `initiate_recovery` / `cancel_recovery`,
             // not on the OE verify path.
-            assert(owner.role == ROLE_OWNER, 'SHHH: signer not an owner');
+            //
+            // V8.4 guardian-OE carve-out: ROLE_GUARDIAN envelopes are
+            // accepted iff the OE's calls are exactly one call to
+            // `initiate_recovery` on this account AND the `proposer` arg
+            // (calldata[0]) equals the signer's owner_id. This closes the
+            // V8.3 gap where guardians could never directly trigger
+            // recovery (the only valid path required an owner OE, which
+            // defeats the "I lost my owner key" use case). Cancel and
+            // finalize stay owner-only / permissionless respectively.
+            assert(
+                owner.role == ROLE_OWNER
+                    || (owner.role == ROLE_GUARDIAN
+                        && _is_single_initiate_recovery_call(
+                            outside_execution.calls, get_contract_address(), owner_id,
+                        )),
+                'SHHH: signer not an owner',
+            );
 
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
@@ -1250,6 +1266,50 @@ pub mod ShhhAccount {
         assert(check_ecdsa_signature(message_hash, session_pubkey, r, s), 'SESSION: bad signature');
 
         self.session_key.consume_session_call(session_pubkey);
+    }
+
+    /// V8.4 guardian-OE carve-out check. Returns true iff `calls` is
+    /// exactly one call to `initiate_recovery` on the account itself AND
+    /// the first calldata felt (the `proposer` arg) equals
+    /// `signer_owner_id`. Used by `execute_from_outside_v2` to allow
+    /// ROLE_GUARDIAN signers exclusively for the recovery-initiation
+    /// path; every other selector still requires ROLE_OWNER.
+    ///
+    /// The `proposer == signer_owner_id` clause prevents a guardian from
+    /// signing an OE that names a different owner_id as proposer (the
+    /// proposer arg ends up in the event log + the recovery payload
+    /// commitment, so binding it to the signer keeps the audit trail
+    /// honest). The recovery flow's own role check on the proposer
+    /// (`proposer_record.role == ROLE_GUARDIAN` at `initiate_recovery`)
+    /// remains as defense-in-depth.
+    fn _is_single_initiate_recovery_call(
+        calls: Span<Call>, self_addr: ContractAddress, signer_owner_id: u32,
+    ) -> bool {
+        if calls.len() != 1_u32 {
+            return false;
+        }
+        let call = calls.at(0);
+        if *call.to != self_addr {
+            return false;
+        }
+        if *call.selector != selector!("initiate_recovery") {
+            return false;
+        }
+        // initiate_recovery(proposer, new_kind, new_pubkey_bytes,
+        //                   new_role, new_weight, new_label)
+        // — `proposer` is the first felt of calldata. Require it match
+        // the OE signer's owner_id so a guardian can only initiate on
+        // their own behalf.
+        let calldata: Span<felt252> = *call.calldata;
+        if calldata.len() == 0_u32 {
+            return false;
+        }
+        let proposer_felt: felt252 = (*calldata.at(0));
+        let proposer_id: u32 = match proposer_felt.try_into() {
+            Option::Some(v) => v,
+            Option::None => { return false; },
+        };
+        proposer_id == signer_owner_id
     }
 
     /// V8-specific admin selectors that sessions must never reach.
