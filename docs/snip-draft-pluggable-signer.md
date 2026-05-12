@@ -236,7 +236,7 @@ Owner signatures arrive at the account as the `signature: Span<felt252>` paramet
 
 1. `owner_id < owner_count`; otherwise revert.
 2. Owner is not revoked; otherwise revert.
-3. **Owner has `ROLE_OWNER` role** (audit C-1 fix). Guardians and recovery-only roles MUST NOT contribute to signature validity; otherwise revert with a distinct error.
+3. **Owner has `ROLE_OWNER` role** (audit C-1 fix). Guardians and recovery-only roles MUST NOT contribute to signature validity for arbitrary OEs; otherwise revert with a distinct error. **Implementations MAY exempt designated single-call selectors from this requirement** (typically the recovery-initiation entry point) so a guardian whose kind is on any registered curve can sign their own recovery proposal — see the "Selector-scoped role relaxation" note below.
 4. `kind_tag == owners[owner_id].kind`; otherwise revert.
 5. `verifier_classes[kind_tag] != 0`; otherwise revert.
 6. Read `pubkey` from the owner's stored bytes; raise the `inside_verifier` reentrancy flag (Part F).
@@ -249,6 +249,19 @@ Owner signatures arrive at the account as the `signature: Span<felt252>` paramet
 10. Reject duplicate `owner_id` across the n inner envelopes.
 11. Sum `weight[owner_id_i]` across all valid envelopes.
 12. Require `sum(weight_i) >= owner_set.threshold`; otherwise revert.
+
+**Selector-scoped role relaxation (non-normative, RECOMMENDED for accounts that support guardian recovery).** Step 3 above MAY be relaxed for a closed set of single-call selectors known at the account-class level. **Critically: the relaxation NEVER extends to threshold envelopes (`V2_THRESHOLD`)** — every inner of a threshold MUST still satisfy `ROLE_OWNER`, regardless of the selector being called. Multi-guardian recovery flows (M-of-N guardians) are explicitly out of scope for this SNIP. The reference implementation relaxes the single-owner V2 check exactly for `initiate_recovery` and ONLY when all of these are simultaneously true:
+
+- The OE's `calls` field contains exactly one call (`len == 1`).
+- That call's `to` address equals the account itself (`get_contract_address()`).
+- That call's selector equals `selector!("initiate_recovery")` (the SNIP-defined recovery-initiation entry point — implementations using a different name MUST document the analog).
+- The first felt of that call's calldata (the `proposer` argument) equals the signer's `owner_id` from the V2_SNIP12 envelope. This binds the on-chain audit trail to the guardian who actually signed and prevents a guardian from naming a different guardian as proposer.
+
+If all four conditions hold AND the signer's role is `ROLE_GUARDIAN` (not revoked), the inner-envelope verification (steps 4-9) proceeds as if the signer were `ROLE_OWNER`. Verifier-class dispatch is identical — a guardian whose kind is `ED25519` (Phantom), `SECP256K1` (MetaMask), `WEBAUTHN_P256` (passkey), or any other registered curve signs the same SNIP-12 typed-data envelope an owner would sign for any other selector.
+
+`cancel_recovery` and `finalize_recovery` stay outside the relaxation: cancel remains `ROLE_OWNER`-only (the security primitive that lets an active owner veto a malicious guardian during the timelock window), and finalize remains permissionless (the post-timelock state machine has no role check at all).
+
+The threshold envelope (`V2_THRESHOLD`) does NOT carry the relaxation: every inner of a threshold MUST satisfy `ROLE_OWNER`. Multi-guardian recovery flows (M-of-N guardians) are out of scope for this SNIP; implementations that need them MAY follow up with a separate proposal that defines a threshold envelope variant scoped to guardian roles.
 
 **Kind-specific payload layouts** (`...payload` from the envelopes above):
 
@@ -371,6 +384,7 @@ Without salt binding, a key re-encoded across curves could map to the same addre
 6. **Key-validation on deploy**: constructors MUST validate that the supplied key material is in-range for the chosen curve (Shhh audit L-1). Out-of-range values create bricked accounts.
 7. **Verifier-class reentrancy**: because `library_call_syscall` runs the verifier in the *account's* storage context, a malicious verifier class can attempt to syscall back into the account's owner-mutation API mid-verify. Accounts MUST raise a reentrancy flag (the reference impl uses `inside_verifier`) around every `library_call → verify` and `library_call → validate_pubkey` site, and every owner-mutation entry point MUST assert the flag is unset. Reentrancy guards on `verify` alone are insufficient — `validate_pubkey` is called at owner-registration time and is equally exposed (audit M-1, 2026-05-10).
 8. **Verifier-class rotation governance**: adding or rotating an entry in `verifier_classes` is a privileged operation. Implementations MUST gate `add_verifier_class` / `remove_verifier_class` behind the same governance path that gates owner changes (the reference impl uses a 48-hour timelock with unanimous owner approval for `ADD_VERIFIER_CLASS`). Removing a verifier class whose kind tag is still referenced by an active owner MUST be rejected. Rotating to a verifier with an incompatible pubkey schema MUST require a fresh kind tag, not in-place replacement (Part F).
+9. **Selector-scoped role relaxation (guardian-OE recovery initiation)**: implementations that expose the optional relaxation described in Part C MUST gate it on every condition stated there — single-call OEs, self-targeting, the specific recovery-initiation selector, and `proposer == signer_owner_id`. Omitting any one condition reintroduces the audit C-1 attack surface (the original 2026-05-07 finding was guardians silently becoming co-owners by virtue of having an OE-verify-time role of ROLE_GUARDIAN). The relaxation MUST NOT extend to `cancel_recovery` (owner-only veto right) or to threshold envelopes. Reference impl: `_is_single_initiate_recovery_call` at `src/account.cairo` is the audited canonical predicate; integrators porting the pattern SHOULD use a byte-for-byte equivalent rather than recoding the check.
 
 ## Reference Implementation
 

@@ -65,6 +65,32 @@ pub mod ShhhAccount {
     /// Owner-envelope header min length: [version_tag, owner_id, kind_tag].
     pub const OE_OWNER_ENVELOPE_HEADER_LEN: u32 = 3;
 
+    /// Storage slot of the OZ AccountComponent's `Account_public_key`
+    /// field on the legacy sessions-smart-contract class. Read by
+    /// `bootstrap_from_sessions_signed` (V8.4, audit C-1 fix) to bind
+    /// the supplied `public_key` to the preserved sessions owner.
+    ///
+    /// **ABI-tied to OZ AccountComponent v3.0.0** — verified against
+    /// `github.com/OpenZeppelin/cairo-contracts` tag `v3.0.0`,
+    /// `packages/account/src/account.cairo`, which declares
+    /// `pub Account_public_key: felt252` inside `AccountComponent::Storage`.
+    /// Substorage v0 places this field at the top-level slot keyed by
+    /// `selector!("Account_public_key")`.
+    ///
+    /// **Maintenance contract**: if `Scarb.toml`'s `openzeppelin` git
+    /// tag is bumped past `v3.0.0`, the OZ source MUST be re-verified
+    /// against this constant before merge. A rename in OZ (e.g., to
+    /// `public_key` without the `Account_` prefix, or to a different
+    /// substorage layout in v4.0.0+) silently breaks
+    /// `bootstrap_from_sessions_signed` for any sessions wallet minted
+    /// off the newer OZ class — the slot read returns zero, the
+    /// 'MIG: no legacy pk' branch fires, and stranded-state recovery
+    /// is permanently unreachable for those wallets. The error fail-
+    /// closes safely (no takeover surface), but legitimate users
+    /// cannot recover. Treat any OZ bump as gated on re-verifying
+    /// this slot.
+    pub const LEGACY_OZ_ACCOUNT_PUBKEY_SLOT: felt252 = selector!("Account_public_key");
+
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: OwnerSetComponent, storage: owners, event: OwnerSetEvent);
     component!(path: GovernanceComponent, storage: governance, event: GovernanceEvent);
@@ -450,7 +476,23 @@ pub mod ShhhAccount {
             // co-owner with full drain authority — the role distinction
             // was enforced only at `initiate_recovery` / `cancel_recovery`,
             // not on the OE verify path.
-            assert(owner.role == ROLE_OWNER, 'SHHH: signer not an owner');
+            //
+            // V8.4 guardian-OE carve-out: ROLE_GUARDIAN envelopes are
+            // accepted iff the OE's calls are exactly one call to
+            // `initiate_recovery` on this account AND the `proposer` arg
+            // (calldata[0]) equals the signer's owner_id. This closes the
+            // V8.3 gap where guardians could never directly trigger
+            // recovery (the only valid path required an owner OE, which
+            // defeats the "I lost my owner key" use case). Cancel and
+            // finalize stay owner-only / permissionless respectively.
+            assert(
+                owner.role == ROLE_OWNER
+                    || (owner.role == ROLE_GUARDIAN
+                        && _is_single_initiate_recovery_call(
+                            outside_execution.calls, get_contract_address(), owner_id,
+                        )),
+                'SHHH: signer not an owner',
+            );
 
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
@@ -982,12 +1024,179 @@ pub mod ShhhAccount {
         // any address watching the mempool could race the upgrade tx and
         // call `bootstrap_from_sessions(attacker_pk, …)` first, seizing
         // the account before the legitimate owner's bootstrap arrives.
+        //
+        // Stranded-state recovery (V8.4): if the OLD class's multicall is
+        // non-atomic (chipi-pay/sessions-smart-contract is — see
+        // `_execute_calls` in that repo, which swallows subcall errors at
+        // a `Result::Err(_) => res.append(array![].span())` site), the
+        // upgrade syscall can take effect while this call silently reverts
+        // and leaves the account stranded at V8.3 with primary_kind == 0.
+        // In that case use `bootstrap_from_sessions_signed` below — it
+        // accepts a STARK signature from `public_key` over a canonical
+        // bootstrap message bound to this account's address, so anyone
+        // can re-trigger initialization (typically the original owner
+        // themselves via a non-self relay or sponsor) without needing
+        // a self-call channel.
         _assert_self_call(@self);
-        // One-shot gate: V8 primary owner is frozen for the life of the
-        // account. Trying to rebootstrap an already-initialized account
-        // is an invariant violation.
-        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
+        _initialize_v8_from_sessions(ref self, public_key, stark_verifier_class, label);
+    }
 
+    /// Stranded-state recovery for the V8.0/V8.1/V8.2/V8.3 migration path
+    /// (V8.4, audit-trail item from the 2026-05-12 review).
+    ///
+    /// Used ONLY when the sessions-contract upgrade tx left the account at
+    /// the V8.3 class with `primary_kind == 0` — i.e., the upgrade syscall
+    /// succeeded but the bundled bootstrap call reverted silently because
+    /// the OLD class's OE multicall is non-atomic. The wallet at that
+    /// point has no owners and no signature path to recover via
+    /// `bootstrap_from_sessions` (which requires `_assert_self_call`).
+    ///
+    /// This entry point requires TWO independent authorization checks:
+    ///
+    /// 1. **Preserved-pubkey match** (audit C-1, 2026-05-12). The caller
+    ///    supplies `public_key`, and we cross-reference it against the
+    ///    OZ AccountComponent's `Account_public_key` storage slot that
+    ///    the sessions-smart-contract class wrote at constructor time
+    ///    (sessions-smart-contract `src/account.cairo:158` —
+    ///    `self.account.initializer(public_key)`). The slot survives
+    ///    `replace_class_syscall` losslessly (same property V8.x relies
+    ///    on for `oe_nonces`). Without this check, anyone with a fresh
+    ///    STARK keypair could sign the canonical msg below and seize
+    ///    any stranded wallet — the 2026-05-12 V8.4 pre-merge audit's
+    ///    Critical finding. The PoC test
+    ///    `audit_poc_attacker_can_seize_any_stranded_wallet` in
+    ///    `tests/account_migration.cairo` is the regression that
+    ///    proves the gate fires.
+    ///
+    /// 2. **STARK ECDSA signature under `public_key`** over
+    ///    `bootstrap_recovery_hash(public_key, stark_verifier_class,
+    ///    label)`. The canonical hash binds:
+    ///      - A domain-separator tag ('SHHH_BOOTSTRAP_V8_4') so the
+    ///        signature cannot be reused across protocols.
+    ///      - The account's own `get_contract_address()` so the
+    ///        signature cannot be replayed on a different stranded
+    ///        V8.x wallet.
+    ///      - `public_key` so a frontrunner cannot substitute their
+    ///        own key and re-broadcast the same signature.
+    ///      - `stark_verifier_class` so a frontrunner cannot point
+    ///        the kind dispatch at a malicious verifier.
+    ///      - `label` so storage layout matches the original bootstrap
+    ///        intent.
+    ///
+    /// Together: only an actor who (a) knew the legacy sessions owner's
+    /// private key and (b) wants to bootstrap with that exact public_key
+    /// + verifier + label tuple can pass both gates. A frontrunner who
+    /// captures the legitimate signed tx and re-broadcasts it with the
+    /// same parameters simply relays the intended bootstrap — not an
+    /// attack. A frontrunner with a fresh keypair fails gate (1).
+    ///
+    /// Residual surface: a legitimate user whose private key is
+    /// genuinely lost has no recovery path through this entry point.
+    /// They must use guardian recovery (if previously set up) or the
+    /// wallet is lost — no different from any other self-custodial
+    /// wallet without a guardian. This is the correct security
+    /// property for a recovery primitive.
+    ///
+    /// One-shot: same `primary_kind == 0` gate as the happy path.
+    #[external(v0)]
+    fn bootstrap_from_sessions_signed(
+        ref self: ContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) {
+        // No _assert_self_call — the whole point of this entry point is to
+        // be usable from a non-self caller when the wallet is stranded.
+        // Authorization is the TWO independent checks below.
+        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
+        assert(public_key != 0, 'MIG: public_key is zero');
+        let verifier_felt: felt252 = stark_verifier_class.into();
+        assert(verifier_felt != 0, 'MIG: verifier class zero');
+
+        // (1) Bind to the preserved sessions-smart-contract owner pubkey.
+        //
+        // The slot we read (`LEGACY_OZ_ACCOUNT_PUBKEY_SLOT`) is the
+        // top-level storage address of OZ AccountComponent v3.0.0's
+        // `Account_public_key` field. It's defined as a module-level
+        // const above (search for `LEGACY_OZ_ACCOUNT_PUBKEY_SLOT`) so
+        // the OZ-version dependency is named, documented, and
+        // single-point-of-update. See the const's docstring for the
+        // maintenance contract on OZ version bumps.
+        //
+        // The sessions class writes this slot at constructor time. After
+        // `replace_class_syscall` to V8.4, storage persists; the slot
+        // remains the legacy pubkey. We read it via `storage_read_syscall`
+        // (domain 0) and require equality with the supplied `public_key`.
+        //
+        // Edge cases:
+        //   - slot is 0 (legacy class didn't use OZ AccountComponent at
+        //     this slot, OR OZ renamed the field in a future version and
+        //     the const is stale): revert with 'MIG: no legacy pk' —
+        //     recovery via this entry point is unreachable for such
+        //     wallets, which fails closed safely (no takeover surface)
+        //     but means legitimate users of newer OZ versions cannot
+        //     recover via this path until the const is re-verified.
+        //   - slot is non-zero but != public_key: revert with
+        //     'MIG: pk mismatch' — the supplied pubkey doesn't match the
+        //     preserved legacy owner; either the caller is an attacker
+        //     with a fresh keypair (audit C-1) or the wallet's legacy
+        //     class used a different slot for the owner key.
+        let slot_address: starknet::storage_access::StorageAddress = LEGACY_OZ_ACCOUNT_PUBKEY_SLOT
+            .try_into()
+            .expect('MIG: bad slot address');
+        let preserved_slot = starknet::syscalls::storage_read_syscall(0, slot_address).unwrap();
+        assert(preserved_slot != 0, 'MIG: no legacy pk');
+        assert(public_key == preserved_slot, 'MIG: pk mismatch');
+
+        // (2) Verify the STARK ECDSA signature under `public_key`.
+        let bootstrap_msg = core::poseidon::poseidon_hash_span(
+            array![
+                'SHHH_BOOTSTRAP_V8_4', starknet::get_contract_address().into(), public_key,
+                verifier_felt, label,
+            ]
+                .span(),
+        );
+        assert(
+            core::ecdsa::check_ecdsa_signature(bootstrap_msg, public_key, signature_r, signature_s),
+            'MIG: bad bootstrap signature',
+        );
+
+        _initialize_v8_from_sessions(ref self, public_key, stark_verifier_class, label);
+    }
+
+    /// Shared initialization between `bootstrap_from_sessions` (self-call
+    /// happy path) and `bootstrap_from_sessions_signed` (stranded-state
+    /// recovery).
+    ///
+    /// **INVARIANT — CALLER MUST AUTHORIZE BEFORE INVOKING.** This helper
+    /// does NOT perform any caller-identity check. The two current
+    /// callers each handle authorization themselves:
+    ///   - `bootstrap_from_sessions` gates on `_assert_self_call` (only
+    ///     the account itself, called inside an atomic OE multicall).
+    ///   - `bootstrap_from_sessions_signed` gates on the preserved-pubkey
+    ///     match (audit C-1) plus a STARK ECDSA signature under that
+    ///     pubkey over the canonical bootstrap message.
+    ///
+    /// The defensive re-checks below (`primary_kind == 0`,
+    /// `public_key != 0`, `verifier_felt != 0`) verify PARAMETER VALIDITY
+    /// only — they do NOT replace authorization. If a future entry point
+    /// is added that calls this helper, that entry point MUST install its
+    /// own authorization gate before delegating. The audit-2026-05-12
+    /// Informational finding on this helper recommended an enum-based
+    /// `AuthProof` pattern; the comment here is the lighter-weight
+    /// equivalent until a third caller exists.
+    fn _initialize_v8_from_sessions(
+        ref self: ContractState,
+        public_key: felt252,
+        stark_verifier_class: ClassHash,
+        label: felt252,
+    ) {
+        // Defensive: re-assert the one-shot gate. Both callers also assert
+        // this earlier so they get a distinct revert string, but if a
+        // future entry point forgets the assertion this catches it.
+        assert(self.primary_kind.read() == 0, 'MIG: already initialized');
         assert(public_key != 0, 'MIG: public_key is zero');
         let verifier_felt: felt252 = stark_verifier_class.into();
         assert(verifier_felt != 0, 'MIG: verifier class zero');
@@ -1161,6 +1370,62 @@ pub mod ShhhAccount {
         self.session_key.consume_session_call(session_pubkey);
     }
 
+    /// V8.4 guardian-OE carve-out check. Returns true iff `calls` is
+    /// exactly one call to `initiate_recovery` on the account itself AND
+    /// the first calldata felt (the `proposer` arg) equals
+    /// `signer_owner_id`. Used by `execute_from_outside_v2` to allow
+    /// ROLE_GUARDIAN signers exclusively for the recovery-initiation
+    /// path; every other selector still requires ROLE_OWNER.
+    ///
+    /// The `proposer == signer_owner_id` clause prevents a guardian from
+    /// signing an OE that names a different owner_id as proposer (the
+    /// proposer arg ends up in the event log + the recovery payload
+    /// commitment, so binding it to the signer keeps the audit trail
+    /// honest). The recovery flow's own role check on the proposer
+    /// (`proposer_record.role == ROLE_GUARDIAN` at `initiate_recovery`)
+    /// remains as defense-in-depth.
+    fn _is_single_initiate_recovery_call(
+        calls: Span<Call>, self_addr: ContractAddress, signer_owner_id: u32,
+    ) -> bool {
+        if calls.len() != 1_u32 {
+            return false;
+        }
+        let call = calls.at(0);
+        if *call.to != self_addr {
+            return false;
+        }
+        if *call.selector != selector!("initiate_recovery") {
+            return false;
+        }
+        // initiate_recovery(proposer, new_kind, new_pubkey_bytes,
+        //                   new_role, new_weight, new_label)
+        // — `proposer` is the first felt of calldata. Require it match
+        // the OE signer's owner_id so a guardian can only initiate on
+        // their own behalf.
+        //
+        // V8.4 audit L-1 (2026-05-12): require the well-formed Serde
+        // minimum (7 felts: proposer + kind + pubkey_bytes_len + ≥1
+        // pubkey felt + role + weight + label). Without this floor the
+        // helper would accept truncated calldata; the OE then proceeds
+        // to call_contract_syscall, and safety relies on
+        // _execute_calls_atomic_span panicking with 'H1: subcall
+        // failed' when Serde deserialization fails inside
+        // initiate_recovery. The coupling is fragile — a future
+        // change that catches Serde errors more leniently would let
+        // a malformed initiate_recovery reach the recovery component
+        // with default-zero fields. Defense-in-depth check here.
+        let calldata: Span<felt252> = *call.calldata;
+        if calldata.len() < 7_u32 {
+            return false;
+        }
+        let proposer_felt: felt252 = (*calldata.at(0));
+        let proposer_id: u32 = match proposer_felt.try_into() {
+            Option::Some(v) => v,
+            Option::None => { return false; },
+        };
+        proposer_id == signer_owner_id
+    }
+
     /// V8-specific admin selectors that sessions must never reach.
     fn _v8_blocklist_ok(calls: Span<Call>, self_addr: ContractAddress) -> bool {
         let mut i: u32 = 0;
@@ -1184,7 +1449,8 @@ pub mod ShhhAccount {
                     || sel == selector!("initiate_recovery")
                     || sel == selector!("cancel_recovery")
                     || sel == selector!("finalize_recovery")
-                    || sel == selector!("bootstrap_from_sessions") {
+                    || sel == selector!("bootstrap_from_sessions")
+                    || sel == selector!("bootstrap_from_sessions_signed") {
                     return false;
                 }
             }
