@@ -1025,26 +1025,51 @@ pub mod ShhhAccount {
     /// point has no owners and no signature path to recover via
     /// `bootstrap_from_sessions` (which requires `_assert_self_call`).
     ///
-    /// This entry point accepts a STARK ECDSA signature from `public_key`
-    /// over `bootstrap_recovery_hash(public_key, stark_verifier_class,
-    /// label)`. The canonical hash binds:
-    ///   - A domain-separator tag ('SHHH_BOOTSTRAP_V8_4') so the signature
-    ///     cannot be reused across protocols.
-    ///   - The account's own `get_contract_address()` so the signature
-    ///     cannot be replayed on a different stranded V8.3 wallet.
-    ///   - `public_key` so a frontrunner cannot substitute their own key
-    ///     and re-broadcast the same signature.
-    ///   - `stark_verifier_class` so a frontrunner cannot point the kind
-    ///     dispatch at a malicious verifier.
-    ///   - `label` so storage layout matches the original bootstrap intent.
+    /// This entry point requires TWO independent authorization checks:
     ///
-    /// The frontrunner threat from H-1 (mempool watcher tries to seize
-    /// the account between upgrade and bootstrap) is closed by the
-    /// signature itself: an attacker without `public_key`'s private key
-    /// cannot produce a valid signature, and the canonical message commits
-    /// to every parameter so a captured signature cannot be re-bound.
-    /// A frontrunner that submits the legitimate signed tx with the same
-    /// parameters simply relays the intended bootstrap — not an attack.
+    /// 1. **Preserved-pubkey match** (audit C-1, 2026-05-12). The caller
+    ///    supplies `public_key`, and we cross-reference it against the
+    ///    OZ AccountComponent's `Account_public_key` storage slot that
+    ///    the sessions-smart-contract class wrote at constructor time
+    ///    (sessions-smart-contract `src/account.cairo:158` —
+    ///    `self.account.initializer(public_key)`). The slot survives
+    ///    `replace_class_syscall` losslessly (same property V8.x relies
+    ///    on for `oe_nonces`). Without this check, anyone with a fresh
+    ///    STARK keypair could sign the canonical msg below and seize
+    ///    any stranded wallet — the 2026-05-12 V8.4 pre-merge audit's
+    ///    Critical finding. The PoC test
+    ///    `audit_poc_attacker_can_seize_any_stranded_wallet` in
+    ///    `tests/account_migration.cairo` is the regression that
+    ///    proves the gate fires.
+    ///
+    /// 2. **STARK ECDSA signature under `public_key`** over
+    ///    `bootstrap_recovery_hash(public_key, stark_verifier_class,
+    ///    label)`. The canonical hash binds:
+    ///      - A domain-separator tag ('SHHH_BOOTSTRAP_V8_4') so the
+    ///        signature cannot be reused across protocols.
+    ///      - The account's own `get_contract_address()` so the
+    ///        signature cannot be replayed on a different stranded
+    ///        V8.x wallet.
+    ///      - `public_key` so a frontrunner cannot substitute their
+    ///        own key and re-broadcast the same signature.
+    ///      - `stark_verifier_class` so a frontrunner cannot point
+    ///        the kind dispatch at a malicious verifier.
+    ///      - `label` so storage layout matches the original bootstrap
+    ///        intent.
+    ///
+    /// Together: only an actor who (a) knew the legacy sessions owner's
+    /// private key and (b) wants to bootstrap with that exact public_key
+    /// + verifier + label tuple can pass both gates. A frontrunner who
+    /// captures the legitimate signed tx and re-broadcasts it with the
+    /// same parameters simply relays the intended bootstrap — not an
+    /// attack. A frontrunner with a fresh keypair fails gate (1).
+    ///
+    /// Residual surface: a legitimate user whose private key is
+    /// genuinely lost has no recovery path through this entry point.
+    /// They must use guardian recovery (if previously set up) or the
+    /// wallet is lost — no different from any other self-custodial
+    /// wallet without a guardian. This is the correct security
+    /// property for a recovery primitive.
     ///
     /// One-shot: same `primary_kind == 0` gate as the happy path.
     #[external(v0)]
@@ -1058,14 +1083,45 @@ pub mod ShhhAccount {
     ) {
         // No _assert_self_call — the whole point of this entry point is to
         // be usable from a non-self caller when the wallet is stranded.
-        // Authorization is the signature check below.
+        // Authorization is the TWO independent checks below.
         assert(self.primary_kind.read() == 0, 'MIG: already initialized');
         assert(public_key != 0, 'MIG: public_key is zero');
         let verifier_felt: felt252 = stark_verifier_class.into();
         assert(verifier_felt != 0, 'MIG: verifier class zero');
 
-        // Canonical bootstrap message. Domain-separator + account_address
-        // + every parameter we're about to write to storage.
+        // (1) Bind to the preserved sessions-smart-contract owner pubkey.
+        //
+        // OZ AccountComponent (v3.0.0) declares the storage field as
+        // `pub Account_public_key: felt252` — see
+        // `openzeppelin_account::AccountComponent::Storage` at
+        // `github.com/OpenZeppelin/cairo-contracts` tag `v3.0.0`,
+        // `packages/account/src/account.cairo`. Substorage v0 places this
+        // at a top-level slot keyed by `selector!("Account_public_key")`.
+        //
+        // The sessions class writes this slot at constructor time. After
+        // `replace_class_syscall` to V8.4, storage persists; the slot
+        // remains the legacy pubkey. We read it via `storage_read_syscall`
+        // (domain 0) and require equality with the supplied `public_key`.
+        //
+        // Edge cases:
+        //   - slot is 0 (legacy class didn't use OZ Account, or wallet
+        //     deployed with public_key=0): revert with 'MIG: no legacy pk'
+        //     — recovery via this entry point is impossible for such
+        //     wallets, which is correct (there was no legitimate
+        //     authorization anchor to bind to in the first place).
+        //   - slot is non-zero but != public_key: revert with
+        //     'MIG: pk mismatch' — the supplied pubkey doesn't match the
+        //     preserved legacy owner; either the caller is an attacker
+        //     with a fresh keypair (audit C-1) or the wallet's legacy
+        //     class used a different slot for the owner key.
+        let slot_address: starknet::storage_access::StorageAddress = selector!("Account_public_key")
+            .try_into()
+            .expect('MIG: bad slot address');
+        let preserved_slot = starknet::syscalls::storage_read_syscall(0, slot_address).unwrap();
+        assert(preserved_slot != 0, 'MIG: no legacy pk');
+        assert(public_key == preserved_slot, 'MIG: pk mismatch');
+
+        // (2) Verify the STARK ECDSA signature under `public_key`.
         let bootstrap_msg = core::poseidon::poseidon_hash_span(
             array![
                 'SHHH_BOOTSTRAP_V8_4', starknet::get_contract_address().into(), public_key,

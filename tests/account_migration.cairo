@@ -76,7 +76,17 @@ fn declare_and_deploy() -> (ContractAddress, ClassHash) {
 /// scalar Cairo storage field `foo`, the slot selector is
 /// `selector!("foo")`. For the OwnerSetComponent sub-fields we use the
 /// component-prefixed name.
-fn reset_for_migration_simulation(addr: ContractAddress) {
+///
+/// V8.4 update (audit C-1, 2026-05-12): also writes the OZ
+/// AccountComponent `Account_public_key` slot to simulate the legacy
+/// sessions-smart-contract owner pubkey that `replace_class_syscall`
+/// preserves into V8.4 storage. Without this slot non-zero,
+/// `bootstrap_from_sessions_signed` rejects with 'MIG: no legacy pk',
+/// which is correct fail-closed behavior but breaks the happy-path
+/// fixture. The pubkey value is parameterized so individual tests can
+/// either use the test's chosen pubkey (happy path) or write a
+/// different value (attack tests).
+fn reset_for_migration_simulation_with_legacy_pk(addr: ContractAddress, legacy_pk: felt252) {
     // Wipe the V8 primary-owner scalars.
     store(addr, selector!("primary_kind"), array![0].span());
     store(addr, selector!("primary_pubkey_hash"), array![0].span());
@@ -87,6 +97,27 @@ fn reset_for_migration_simulation(addr: ContractAddress) {
     store(addr, selector!("threshold"), array![0].span());
     store(addr, selector!("primary_owner_id"), array![0].span());
     store(addr, selector!("pubkey_cursor"), array![0].span());
+    // Simulate the preserved OZ AccountComponent.Account_public_key slot
+    // that sessions-smart-contract wrote at constructor time. V8.4's
+    // `bootstrap_from_sessions_signed` reads this exact slot to verify
+    // the supplied pubkey matches the legacy owner.
+    store(addr, selector!("Account_public_key"), array![legacy_pk].span());
+}
+
+/// Back-compat shim — older tests called this without a legacy_pk arg.
+/// Used ONLY by self-call (`bootstrap_from_sessions`) test paths that
+/// don't traverse the V8.4 pk-binding gate, and by signed-bootstrap
+/// tests where the gate is expected to fire FIRST (zero-pubkey,
+/// zero-verifier, one-shot).
+///
+/// Signed-bootstrap tests where the test wants to reach the signature
+/// check must call `reset_for_migration_simulation_with_legacy_pk`
+/// with the test's chosen pubkey so the pk-binding gate passes and
+/// the downstream sig check is what fires.
+fn reset_for_migration_simulation(addr: ContractAddress) {
+    // Default: zero out the legacy-pk slot. Self-call tests don't read
+    // it; signed tests that need it write their own value explicitly.
+    reset_for_migration_simulation_with_legacy_pk(addr, 0);
 }
 
 #[test]
@@ -217,18 +248,20 @@ fn compute_bootstrap_message(
 #[test]
 fn test_v8_4_signed_bootstrap_recovers_stranded_wallet() {
     let (addr, verifier) = declare_and_deploy();
-    // Simulate the stranded state: upgrade succeeded but bootstrap reverted
-    // silently inside the OLD class's non-atomic _execute_calls. After the
-    // tx end-of-block, the class is V8.3 but storage is zeroed.
-    reset_for_migration_simulation(addr);
-
+    // The keypair we'll claim to be the preserved sessions owner.
     let kp = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
+    // Simulate the stranded state AND write the legacy pubkey to the
+    // preserved OZ AccountComponent slot — V8.4's gate (audit C-1)
+    // verifies this slot matches the supplied pubkey.
+    reset_for_migration_simulation_with_legacy_pk(addr, kp.public_key);
+
     let label = 'recovered';
     let msg = compute_bootstrap_message(addr, kp.public_key, verifier, label);
     let (r, s) = kp.sign(msg).unwrap();
 
     // Recovery is callable from ANY address — not the account itself,
-    // not the original owner's EOA. The signature is the authorization.
+    // not the original owner's EOA. The signature + preserved-pk match
+    // is the authorization.
     let relay: ContractAddress = 0xBEEF_C0DE.try_into().unwrap();
     start_cheat_caller_address(addr, relay);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
@@ -253,8 +286,10 @@ fn test_v8_4_signed_bootstrap_recovers_stranded_wallet() {
 #[should_panic(expected: 'MIG: bad bootstrap signature')]
 fn test_v8_4_signed_bootstrap_rejects_invalid_signature() {
     let (addr, verifier) = declare_and_deploy();
-    reset_for_migration_simulation(addr);
     let kp = StarkCurveKeyPairImpl::from_secret_key(0xDEAD_BEEF);
+    // Write the legitimate pubkey to the preserved slot so the V8.4
+    // pk-binding gate passes; the sig-check gate is what we want to fire.
+    reset_for_migration_simulation_with_legacy_pk(addr, kp.public_key);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     // Garbage signature — not a valid ECDSA pair under any private key.
     mig.bootstrap_from_sessions_signed(kp.public_key, verifier, 'x', 0x1, 0x2);
@@ -264,13 +299,12 @@ fn test_v8_4_signed_bootstrap_rejects_invalid_signature() {
 #[should_panic(expected: 'MIG: bad bootstrap signature')]
 fn test_v8_4_signed_bootstrap_rejects_wrong_signer() {
     let (addr, verifier) = declare_and_deploy();
-    reset_for_migration_simulation(addr);
     let legitimate = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
     let attacker = StarkCurveKeyPairImpl::from_secret_key(0xBAD_DEED);
-    // Attacker signs the canonical message with their own key, then
-    // submits it claiming to be the legitimate pubkey. Signature is valid
-    // under the attacker's pubkey, NOT under the claimed `legitimate.public_key`,
-    // so check_ecdsa_signature returns false.
+    // The preserved slot has the legitimate pubkey. The attacker claims
+    // to BE the legitimate pubkey (passes pk-binding gate) but signs
+    // with their own key (fails ECDSA check under the claimed pubkey).
+    reset_for_migration_simulation_with_legacy_pk(addr, legitimate.public_key);
     let msg = compute_bootstrap_message(addr, legitimate.public_key, verifier, 'pwned');
     let (r, s) = attacker.sign(msg).unwrap();
     let mig = IShhhMigrationDispatcher { contract_address: addr };
@@ -284,12 +318,13 @@ fn test_v8_4_signed_bootstrap_rejects_cross_account_replay() {
     // for account A and tries to re-broadcast on a different stranded
     // account B. Canonical message commits to get_contract_address(), so
     // the same (msg_hash, r, s) tuple fails check_ecdsa_signature at B
-    // (B's message hash differs).
+    // (B's message hash differs). The pk-binding gate is configured to
+    // pass at B (same legacy pubkey) so the failure mode is sig-check.
     let (addr_a, verifier) = declare_and_deploy();
     let (addr_b, _) = declare_and_deploy();
-    reset_for_migration_simulation(addr_b);
-
     let kp = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
+    reset_for_migration_simulation_with_legacy_pk(addr_b, kp.public_key);
+
     // Sign FOR account A.
     let msg_a = compute_bootstrap_message(addr_a, kp.public_key, verifier, 'orig');
     let (r, s) = kp.sign(msg_a).unwrap();
@@ -300,23 +335,27 @@ fn test_v8_4_signed_bootstrap_rejects_cross_account_replay() {
 }
 
 #[test]
-#[should_panic(expected: 'MIG: bad bootstrap signature')]
+#[should_panic(expected: 'MIG: pk mismatch')]
 fn test_v8_4_signed_bootstrap_rejects_pubkey_substitution() {
     // Threat model: frontrunner captures the user's signed bootstrap tx
     // from the mempool and substitutes their own pubkey before submission.
-    // Canonical message commits to public_key, so the verification fails
-    // when the contract recomputes the hash with the attacker's pubkey.
+    //
+    // V8.4 audit C-1 update: this is now caught by the pk-binding gate
+    // (preserved slot has legitimate.public_key, attacker supplies
+    // attacker.public_key, pk mismatch), not the sig check. Failure mode
+    // is stronger: the contract rejects without even reaching the
+    // canonical-message rehash + sig check.
     let (addr, verifier) = declare_and_deploy();
-    reset_for_migration_simulation(addr);
-
     let legitimate = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
     let attacker = StarkCurveKeyPairImpl::from_secret_key(0xBAD_DEED);
+    reset_for_migration_simulation_with_legacy_pk(addr, legitimate.public_key);
+
     // User signs the canonical message for THEIR pubkey.
     let msg = compute_bootstrap_message(addr, legitimate.public_key, verifier, 'orig');
     let (r, s) = legitimate.sign(msg).unwrap();
     // Frontrunner substitutes attacker.public_key while reusing (r, s).
-    // Contract recomputes the canonical hash with attacker.public_key,
-    // gets a different msg_hash, signature check fails.
+    // Pk-binding gate: attacker.public_key != legitimate.public_key
+    // (preserved slot) → revert before sig check.
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     mig.bootstrap_from_sessions_signed(attacker.public_key, verifier, 'orig', r, s);
 }
@@ -355,4 +394,93 @@ fn test_v8_4_signed_bootstrap_rejects_zero_verifier() {
     let kp = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
     let mig = IShhhMigrationDispatcher { contract_address: addr };
     mig.bootstrap_from_sessions_signed(kp.public_key, zero_class, 'x', 0x1, 0x2);
+}
+
+// ==========================================================
+// V8.4 audit C-1 (2026-05-12) — fresh-attacker-keypair takeover
+//
+// Direct port of the audit's PoC test
+// (`audit_poc_attacker_can_seize_any_stranded_wallet`). Before the fix
+// the attacker submission succeeded, seizing the wallet. After the
+// fix the attacker's pubkey doesn't match the preserved
+// `Account_public_key` slot, so the contract reverts with
+// 'MIG: pk mismatch'. This test is the regression that locks in the
+// gate.
+// ==========================================================
+
+#[test]
+#[should_panic(expected: 'MIG: pk mismatch')]
+fn test_v8_4_audit_c1_rejects_fresh_attacker_keypair() {
+    let (addr, verifier) = declare_and_deploy();
+    // Legitimate sessions owner is keypair A.
+    let legitimate = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
+    reset_for_migration_simulation_with_legacy_pk(addr, legitimate.public_key);
+
+    // Attacker generates a fresh keypair — no relation to any
+    // legitimate user — and signs the canonical bootstrap message
+    // under their own pubkey.
+    let attacker = StarkCurveKeyPairImpl::from_secret_key(0xDEAD_BEEF_F00D);
+    let msg = compute_bootstrap_message(addr, attacker.public_key, verifier, 'pwned');
+    let (r, s) = attacker.sign(msg).unwrap();
+
+    // Attempt the seizure. Contract checks the preserved-pk slot first:
+    // attacker.public_key != legitimate.public_key → revert.
+    let mig = IShhhMigrationDispatcher { contract_address: addr };
+    mig.bootstrap_from_sessions_signed(attacker.public_key, verifier, 'pwned', r, s);
+}
+
+// ==========================================================
+// V8.4 — preserved-pubkey slot is zero (legacy class didn't use OZ
+// AccountComponent, or wallet was deployed with public_key=0).
+// Should fail-closed with a distinct error.
+// ==========================================================
+
+#[test]
+#[should_panic(expected: 'MIG: no legacy pk')]
+fn test_v8_4_signed_bootstrap_rejects_when_no_preserved_pk() {
+    let (addr, verifier) = declare_and_deploy();
+    // Reset to stranded state but DO NOT write the legacy pubkey slot —
+    // simulates a sessions-style class that doesn't use OZ
+    // AccountComponent at slot `Account_public_key`.
+    store(addr, selector!("primary_kind"), array![0].span());
+    store(addr, selector!("primary_pubkey_hash"), array![0].span());
+    store(addr, selector!("address_salt"), array![0].span());
+    store(addr, selector!("owners_count"), array![0].span());
+    store(addr, selector!("active_count"), array![0].span());
+    store(addr, selector!("threshold"), array![0].span());
+    store(addr, selector!("primary_owner_id"), array![0].span());
+    store(addr, selector!("pubkey_cursor"), array![0].span());
+    // Explicitly zero the preserved-pk slot in case constructor wrote it.
+    store(addr, selector!("Account_public_key"), array![0].span());
+
+    let kp = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
+    let msg = compute_bootstrap_message(addr, kp.public_key, verifier, 'recovered');
+    let (r, s) = kp.sign(msg).unwrap();
+
+    // With no preserved pk to bind against, the entry point cannot
+    // authenticate the caller. Fails closed before signature check.
+    let mig = IShhhMigrationDispatcher { contract_address: addr };
+    mig.bootstrap_from_sessions_signed(kp.public_key, verifier, 'recovered', r, s);
+}
+
+// ==========================================================
+// V8.4 edge — ECDSA primitive rejects zero-component signatures.
+//
+// Audit cleared this implicitly; this test pins the behavior so a
+// future Cairo stdlib regression doesn't open a hole. `r=0, s=0`
+// must fail the ECDSA check (after the pubkey-binding check passes,
+// which it does because we use the legitimate keypair's pubkey).
+// ==========================================================
+
+#[test]
+#[should_panic(expected: 'MIG: bad bootstrap signature')]
+fn test_v8_4_signed_bootstrap_rejects_zero_signature_components() {
+    let (addr, verifier) = declare_and_deploy();
+    let kp = StarkCurveKeyPairImpl::from_secret_key(0xC0FFEE_BEEF);
+    reset_for_migration_simulation_with_legacy_pk(addr, kp.public_key);
+    // (r, s) = (0, 0) under any pubkey. The preserved-pk check passes
+    // (legit pubkey supplied), the canonical msg hashes fine, then
+    // check_ecdsa_signature rejects the zero pair.
+    let mig = IShhhMigrationDispatcher { contract_address: addr };
+    mig.bootstrap_from_sessions_signed(kp.public_key, verifier, 'recovered', 0, 0);
 }
