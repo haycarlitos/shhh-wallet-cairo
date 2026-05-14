@@ -11,6 +11,7 @@ table below chronologically (oldest first).
 | 2026-05-07 | Carlos Castillo ([@haycarlitos](https://github.com/haycarlitos)) — pre-Phase-13 self-review, AI-assisted (Claude Opus 4.7) | [`2026-05-07-claude-opus-pre-phase13-review.md`](./2026-05-07-claude-opus-pre-phase13-review.md) | All Critical/High/Medium closed in V8.1 (mainnet redeclare 2026-05-07) | 1 Critical + 3 High + 3 Med + 1 Low + 6 Info |
 | 2026-05-10 | Carlos Castillo — V8.2 audit-readiness self-review, AI-assisted (Claude Opus 4.7) | [`2026-05-10-claude-opus-v8-2-review.md`](./2026-05-10-claude-opus-v8-2-review.md) | All findings closed in V8.3 (mainnet redeclare 2026-05-11; account-class only, verifier hashes unchanged from V8.2) | 1 High + 1 Medium full closure + 2 Medium + 1 Low |
 | 2026-05-12 | Carlos Castillo — V8.4 pre-merge audit, AI-assisted (Claude Opus 4.7), adversarial independent pass after author self-review | [`2026-05-12-claude-opus-v8-4-review.md`](./2026-05-12-claude-opus-v8-4-review.md) | 1 Critical + 1 Low closed in subsequent commits on `feat/v8-4-bootstrap-safety-and-guardian-oe` (PR #10); 3 Informational acknowledged | 1 Critical + 1 Low + 3 Info |
+| 2026-05-14 | Carlos Castillo — V8.4 pre-declare re-review, AI-assisted (Claude Opus 4.7), adversarial independent pass against the audit-response delta after the 2026-05-12 Critical fix | [`2026-05-14-claude-opus-v8-4-pre-declare-audit.md`](./2026-05-14-claude-opus-v8-4-pre-declare-audit.md) | **Verdict: READY TO DECLARE.** INFO-2 docstring mitigation applied; INFO-1 deferred (auditor judged non-exploitable, can land in V8.5 if desired) | 2 Info |
 
 ## Status of findings
 
@@ -18,14 +19,14 @@ All 12 findings from Omar's audit + all 3 findings from Henri's scan
 are closed on branch `v8-robust` with named regression tests. See the
 response letters for the per-finding resolution table.
 
-Three subsequent internal self-reviews — 2026-05-07 (pre-Phase-13),
-2026-05-10 (V8.2 audit-readiness), 2026-05-12 (V8.4 pre-merge) —
-together surfaced **2 Critical + 4 High + 4 Medium + 1 Low + 6
-Informational** findings against the V8 code that landed after the
-Omar/Henri reviews. All Critical/High/Medium findings are closed in
-the V8.1 / V8.2 / V8.3 / V8.4 redeclare cycles or in the open V8.4 PR
-(commits on `feat/v8-4-bootstrap-safety-and-guardian-oe`). Informational
-findings are tracked as code comments and/or doc clarifications.
+Four subsequent internal self-reviews — 2026-05-07 (pre-Phase-13),
+2026-05-10 (V8.2 audit-readiness), 2026-05-12 (V8.4 pre-merge),
+2026-05-14 (V8.4 pre-declare) — together surfaced **2 Critical + 4
+High + 4 Medium + 1 Low + 8 Informational** findings against the V8
+code that landed after the Omar/Henri reviews. All Critical / High /
+Medium / Low findings are closed in the V8.1 / V8.2 / V8.3 / V8.4
+redeclare cycles. Informational findings are tracked as code comments
+and/or doc clarifications.
 
 The 2026-05-12 V8.4 review was the first pre-merge adversarial review
 on this codebase: an independent Claude Opus pass against a
@@ -33,6 +34,13 @@ self-authored PR found a Critical (`bootstrap_from_sessions_signed`
 missing pubkey-binding gate) that the author missed in self-review.
 The PoC test from the audit was committed alongside the fix to lock in
 the gate.
+
+The 2026-05-14 V8.4 pre-declare review was the second pre-merge
+adversarial pass — specifically a re-review of the audit-response
+delta from the 2026-05-12 cycle, gating the V8.4 mainnet declare on a
+fresh "find what the last audit missed" pass. Verdict:
+**READY TO DECLARE**. Two Informational findings raised; INFO-2
+docstring mitigation applied at the same commit as the audit doc.
 
 ## Chronology
 

@@ -89,6 +89,18 @@ pub mod ShhhAccount {
     /// closes safely (no takeover surface), but legitimate users
     /// cannot recover. Treat any OZ bump as gated on re-verifying
     /// this slot.
+    ///
+    /// **V8-side invariant (audit INFO-2, 2026-05-14)**: no V8
+    /// component embedded via `#[substorage(v0)]` may declare a
+    /// storage field named `Account_public_key`. The substorage-v0
+    /// layout hoists every component field to a top-level slot keyed
+    /// by `starknet_keccak(field_name)`, so a collision would silently
+    /// alias this gate's slot to V8's own state — either accidentally
+    /// satisfying the pk-binding check with garbage or accidentally
+    /// overwriting the preserved legacy pubkey. The current V8.4
+    /// components (SRC5, OwnerSet, Governance, Recovery, SessionKey,
+    /// SpendingPolicy) are collision-free as of `f573290`. Future
+    /// component additions MUST be checked against this name.
     pub const LEGACY_OZ_ACCOUNT_PUBKEY_SLOT: felt252 = selector!("Account_public_key");
 
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
