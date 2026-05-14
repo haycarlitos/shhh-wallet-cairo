@@ -1,10 +1,10 @@
 # V8 class hashes (live on Starknet mainnet)
 
-V8 launched 2026-04-28 with six classes. As of 2026-05-11 there are
-**14 V8.x classes** declared on mainnet:
+V8 launched 2026-04-28 with six classes. As of 2026-05-15 there are
+**15 V8.x classes** declared on mainnet:
 
-- **11 active classes** for new deploys (V8.3 `ShhhAccount` + 10 V8.2 verifier classes).
-- **3 deprecated `ShhhAccount` classes** (V8.0 / V8.1 / V8.2) retained for legacy recognition; they have unfixed audit findings from earlier review cycles and must not be used for new deploys.
+- **11 active classes** for new deploys (V8.4 `ShhhAccount` + 10 V8.2 verifier classes).
+- **4 deprecated `ShhhAccount` classes** (V8.0 / V8.1 / V8.2 / V8.3) retained for legacy recognition; they have unfixed audit findings or known limitations from earlier review cycles and must not be used for new deploys.
 
 Hashes are deterministic functions of the compiled Sierra, so the
 values in the tables below were known and published before declare
@@ -17,22 +17,25 @@ For declare-tx hashes, fees, and per-user cost estimates see
 [`mainnet-deployment.md`](./mainnet-deployment.md). Audit-trail
 docs: `audits/2026-05-07-claude-opus-pre-phase13-review.md`,
 `audits/2026-05-10-claude-opus-v8-2-review.md`,
+`audits/2026-05-12-claude-opus-v8-4-review.md`,
+`audits/2026-05-14-claude-opus-v8-4-pre-declare-audit.md`,
 `docs/audit-response-2026-05-10.md`.
 
-## Production classes (V8.3 — current; declared 2026-05-11)
+## Production classes (V8.4 — current; declared 2026-05-15)
 
-V8.3 closes the four findings from the 2026-05-10 V8.2 self-review
-(audit doc at `audits/2026-05-10-claude-opus-v8-2-review.md`):
-H-1 (`finalize_recovery` skipped `_validate_pubkey_via_verifier`),
-M-1 (`validate_pubkey` library_call now wrapped in
-`inside_verifier` flag), M-2 (`bootstrap_from_sessions` now also
-calls validate_pubkey), M-3 (executable negative tests via
-`EvilVerifier` test helper). Only the account contract changed —
-verifier class hashes stay at V8.2 values.
+V8.4 closes two architectural gaps from the 2026-05-12 SDK-integration
+review (stranded-bootstrap recovery + guardian-OE `initiate_recovery`)
+plus the Critical from the 2026-05-12 V8.4 pre-merge audit
+(`bootstrap_from_sessions_signed` missing pubkey-binding gate) and the
+Low (calldata-length floor on `_is_single_initiate_recovery_call`).
+The 2026-05-14 pre-declare re-review verdict was **READY TO DECLARE**.
+Only the account contract changed — verifier class hashes stay at
+V8.2 values.
 
 | Contract                  | Class hash                                                                  | Role                                                     |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount` V8.3        | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`        | V8 account — V8.2 + 2026-05-10 audit closeout. **Use this for new deploys.** |
+| `ShhhAccount` V8.4        | `0x075dfb396145926bffa6beb659897f46cc082a50b211d80871cff7f1038fa58a`        | V8 account — V8.3 + stranded-bootstrap recovery + guardian-OE `initiate_recovery` + 2026-05-12 audit C-1 closeout. **Use this for new deploys.** |
+| `ShhhAccount` V8.3        | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`        | V8.3 (no stranded-bootstrap recovery primitive; no guardian-OE `initiate_recovery`). Deprecated 2026-05-15. |
 | `ShhhAccount` V8.2        | `0x02a0b719d79b063cafd45a32d34c98b28f220baa678611db63790150a361a062`        | V8.2 (audit M-1 partial in OE paths only). Deprecated 2026-05-11. |
 | `StarkVerifier`           | `0x00d09209b2da9d49fc805ba26380ba4ce25aa641116c10eb178e1051a71dbf68`        | STARK-curve owner signer (V8.2)                          |
 | `Ed25519Verifier`         | `0x030a7dfc03e59cef6e41699e734abd2df53ce393a052221c02c6e07665949f74`        | Ed25519 owner signer (Phantom / Solana) (V8.2)           |
@@ -75,7 +78,7 @@ instances remain readable; **new deploys MUST use V8.2.**
 
 ## Deploy status
 
-**14 V8.x classes declared on Starknet mainnet** by deployer
+**15 V8.x classes declared on Starknet mainnet** by deployer
 `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`:
 
 - 2026-04-28 — initial 6: V8.0 `ShhhAccount` + StarkVerifier +
@@ -96,20 +99,31 @@ instances remain readable; **new deploys MUST use V8.2.**
   inside_verifier symmetry, M-2 bootstrap_from_sessions, M-3 evil
   verifier negative tests). Verifier class hashes unchanged from
   V8.2.
+- 2026-05-15 — V8.4 `ShhhAccount` redeclare (audit-closed against
+  2026-05-12 V8.4 pre-merge review + 2026-05-14 pre-declare
+  re-review). Adds `bootstrap_from_sessions_signed` for stranded-
+  state recovery (audit C-1) + guardian-OE carve-out for
+  `initiate_recovery` (V8.3 architectural gap) + L-1 calldata-
+  length floor + `LEGACY_OZ_ACCOUNT_PUBKEY_SLOT` const. Verifier
+  class hashes unchanged from V8.2. Declare tx
+  `0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd`
+  in block 9787252, actual cost 43.67 STRK.
 
-Total declare cost: ~283 STRK across the 14 classes.
+Total declare cost: ~327 STRK across the 15 classes (283 through V8.3 + 43.67 V8.4).
 
-V8.0 / V8.1 / V8.2 `ShhhAccount` classes stay declared for legacy
-recognition but are deprecated for new deploys. V8.1 verifier class
-hashes are incompatible with V8.2+ ShhhAccount because they lack
-`validate_pubkey`. Existing V8.x instances do not have a self-upgrade
-path — the only path from V8.0/V8.1 to V8.3 is to deploy a fresh
-V8.3 account at a new address and migrate funds manually.
+V8.0 / V8.1 / V8.2 / V8.3 `ShhhAccount` classes stay declared for
+legacy recognition but are deprecated for new deploys. V8.1 verifier
+class hashes are incompatible with V8.2+ ShhhAccount because they
+lack `validate_pubkey`. Existing V8.x instances do not have a self-
+upgrade path — the only path from V8.0 / V8.1 / V8.2 / V8.3 to V8.4
+is to deploy a fresh V8.4 account at a new address and migrate funds
+manually.
 
-Phase 13 + 14 external audits are gated on the V8.3 commit. If an
-audit finding requires a redeploy, V8.4 = new class hash + opt-in
-new-address deploy (existing V8.x wallets keep working at their
-current class).
+Phase 13 + 14 external audits are scheduled against the V8.4 commit
+(post-merge `v8-robust` HEAD after PR #11). If an external audit
+finding requires a redeploy, V8.5 = new class hash + opt-in new-
+address deploy (existing V8.x wallets keep working at their current
+class).
 
 ## How to reproduce
 
