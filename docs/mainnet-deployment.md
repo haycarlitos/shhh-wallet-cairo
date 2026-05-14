@@ -48,7 +48,10 @@ STRK price reference: $0.038 / STRK (2026-04-28)
 | JwtES256AppleSubVerifier  | 243 KB      | `0x35cac3d88dca7fc4136af5a285fb38454d0f2a8c5d2659d294c39f12150537e`     | 14.7752 STRK| $0.566  |
 | Bls12_381MinSigVerifier   | 1.7 MB      | `0x129d66c892d7ea36a1c15a902cf673a37e97d33b5c3e6c0f7f6258b712d79d2`     | 59.2020 STRK| $2.270  |
 | ShhhAccount V8.1          | 845 KB      | `0x14379d2ce90b43d28250b9a17e58f338e62a51305e4199bc8144e964b095ff`       | 42.3944 STRK| $1.625  |
-| **Total**                 |             |                                                                        | **236.474 STRK** | **$9.065** |
+| **V8.2 cycle (11 classes)**  | n/a         | see [audits/2026-05-10-claude-opus-v8-2-review.md](../audits/2026-05-10-claude-opus-v8-2-review.md) for per-class hashes | ~210 STRK | ~$8.0   |
+| **V8.3 ShhhAccount**         | 851 KB      | declare 2026-05-11 (audit-closed against 2026-05-10 V8.2 review)        | ~46 STRK    | ~$1.75  |
+| **V8.4 ShhhAccount**         | 854 KB      | [`0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd`](https://voyager.online/tx/0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd) — class `0x075dfb396…fa58a`, block 9787252, 2026-05-15 | 43.6711 STRK| ~$1.66  |
+| **Total**                 |             |                                                                        | **~536 STRK** | **~$20.4** |
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.
