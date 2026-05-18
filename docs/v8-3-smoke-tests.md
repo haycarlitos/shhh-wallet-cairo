@@ -8,11 +8,46 @@
 
 ## Summary
 
-**5 OE smokes passing + 1 V8.4 deploy smoke.** V8.3 dispatcher proven via V8.1 carry-forward (Test 1, 2026-05-10). V8.4 deploy + state readback (Test 1a, 2026-05-15). **Four V8.4 paymaster-sponsored OEs through Chipi completed 2026-05-18**: STARK (Test 15), EIP-191 MetaMask `personal_sign` (Test 3), ED25519 Phantom/Solana (Test 2), WEBAUTHN_P256 passkey (Test 7). All four routed through `paymaster_executeSponsoredRaw` with `caller='ANY_CALLER'` and paymaster-paid fees.
+**5 OE smokes + 1 V8.4 deploy smoke + governance propose all passing (trace-verified, no silent reverts).** V8.3 dispatcher proven via V8.1 carry-forward (Test 1, 2026-05-10). V8.4 deploy + state readback (Test 1a, 2026-05-15). **Four V8.4 paymaster-sponsored OEs through Chipi completed 2026-05-18 with trace-verified inner-call success**: STARK (Test 15), EIP-191 MetaMask `personal_sign` (Test 3), ED25519 Phantom/Solana (Test 2), WEBAUTHN_P256 passkey (Test 7). **Test 11 propose phase landed 2026-05-18** — 48h timelock on `propose_add_owner` now running; execute phase opens 2026-05-20T23:28Z.
 
-**All four Chipi Cycle-1 kinds are now production-validated.** Governance, recovery, threshold, sessions, and the other six kinds (raw secp256k1, raw P-256, EIP-712, JWT-ES256, JWT-Apple-sub, BLS) are still snforge-only (259/259).
+All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. Recovery, threshold, sessions, and the other six kinds (raw secp256k1, raw P-256, EIP-712, JWT-ES256, JWT-Apple-sub, BLS) are still snforge-only (259/259).
 
-**Bottom line for Chipi Pay integration**: V8.4 + Chipi paymaster is production-validated for all four Cycle-1 cross-ecosystem signer kinds — Starknet-native (STARK), MetaMask (EIP-191), Phantom (ED25519), and passkeys (WEBAUTHN_P256). The V8.4-specific paths (`bootstrap_from_sessions_signed`, guardian-OE `initiate_recovery`) deploy cleanly but haven't been exercised end-to-end yet.
+**Two corrections from earlier in this cycle (retracted receipts, see commit history)**:
+1. The "V8.2 verifier" hashes in `class-hashes.md` had **never actually been declared on mainnet** (despite the 2026-05-10 doc claim). All 10 finally declared 2026-05-18 (~100 STRK actual fee; BLS was already on chain).
+2. First-attempt smoke receipts (2026-05-18 morning) had an off-by-60 bug in the OE validity window (`window = 7260 > MAX_ANY_CALLER_VALIDITY_SECONDS = 7200`). **Chipi paymaster silently caught the wallet-level revert and returned outer-tx `SUCCEEDED`**, so the original receipts looked passing. Smoke scripts now assert trace-level non-revert after every OE.
+
+**Bottom line for Chipi Pay integration**: V8.4 + V8.2 verifiers (now all declared) + Chipi paymaster is production-validated for all four Cycle-1 cross-ecosystem signer kinds — Starknet-native (STARK), MetaMask (EIP-191), Phantom (ED25519), and passkeys (WEBAUTHN_P256). The V8.4-specific paths (`bootstrap_from_sessions_signed`, guardian-OE `initiate_recovery`) deploy cleanly but haven't been exercised end-to-end yet.
+
+**Chipi paymaster observation (action item)**: `paymaster_executeSponsoredRaw` currently returns top-level `SUCCEEDED` even when the inner `execute_from_outside_v2` call reverts. Caller has no signal from the receipt alone. Recommend Chipi propagate inner reverts to the outer tx, OR document this explicitly so callers know to inspect the trace.
+
+---
+
+## Test 11 — V8.4 multi-owner governance: `propose_add_owner` via 48h timelock ⏳
+
+**Date**: 2026-05-18 (propose) → 2026-05-20T23:28Z (earliest execute)
+**Class**: V8.4 `ShhhAccount` (`0x075dfb396…fa58a`)
+**Wallet**: Test 15's STARK-primary wallet `0x6727639a48098f0bba4e7fc664eb33168ead2df8e85631df63416ff137a959e`
+**New owner kind**: ED25519, role=ROLE_OWNER, weight=1, label=`'smoke11_phantom'`
+**New owner pubkey**: `0x7e16f77db69f0b1f7158173a2997eaa9b49ab199f37b5de85694c779d7f591b5`
+
+| Step | Tx | Status |
+|---|---|---|
+| `propose_add_owner` OE (STARK primary signs, Chipi paymaster) — **trace-verified** | [`0x6bd9aeb0…3c6a66ad4`](https://voyager.online/tx/0x6bd9aeb0ecb9de5b479968e879cf7504dfbe539d45a161cda53f223c6a66ad4) | ✅ SUCCEEDED + inner OE non-reverted |
+| Wait 48h (`TIMELOCK_ADD_OWNER`) | — | ⏳ in progress until 2026-05-20T23:28Z |
+| `execute_add_owner` (permissionless) | — | ⏸ pending timelock |
+
+`op_id` extracted from OpProposed event (data[1]): `0x61e8fa60fb7a1cb14adb4e74607a539f26d91eb9331e66f5af9225ddba4f784`
+Reproduction script: `shhh:scripts/smoke-test-11.mjs`.
+
+**What the propose phase proves**:
+- `propose_add_owner` is reachable through a single-call OE multicall (the function is `_assert_self_call`-gated, so wrapping it in an OE multicall where the wallet itself is the multicall caller satisfies the check).
+- Governance component's `propose(OP_ADD_OWNER, …)` runs cleanly: op_id is derived, OpProposed event emitted with the timelock + expiry timestamps.
+- The primary STARK owner can author a governance OE (audit C-1 role check passes for ROLE_OWNER).
+
+**Pending for the execute phase** (2026-05-20T23:28Z onwards):
+- `execute_add_owner` is permissionless — anyone can call it once the timelock elapses.
+- The new owner registration triggers `_validate_pubkey_via_verifier(ED25519, [pk_low, pk_high])`, which library_calls the V8.2 ED25519Verifier's `validate_pubkey` method. With V8.2 verifiers now declared, this should succeed.
+- After execute: `owner_count() = 2`, and the new Ed25519 owner can sign OEs end-to-end.
 
 ---
 
@@ -28,7 +63,7 @@
 | Step | Tx | Block | Fee | Status |
 |---|---|---|---|---|
 | Deploy V8.4 instance via UDC (WEBAUTHN_P256 primary, label `'smoke7'`) | [`0x3f07ae8a…ce42c0`](https://voyager.online/tx/0x3f07ae8a21bfe0d524f588a2fc11012a0bf3a0d68163271542a5cd491ce42c0) | — | ~0.566 STRK (deployer-paid) | ✅ |
-| `execute_from_outside_v2` via Chipi paymaster (WebAuthn assertion: synthesized authData + clientDataJSON + P-256 sig, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) | [`0x4b4ee32c…cdebf`](https://voyager.online/tx/0x4b4ee32ca0307661c3dc7804323e39be7b26e1d45907d587fd8379c6eecdebf) | — | `0x83a4618d6da30a` FRI ≈ 0.0370 STRK (**paymaster-paid**) | ✅ SUCCEEDED ACCEPTED_ON_L2 |
+| `execute_from_outside_v2` via Chipi paymaster (WebAuthn assertion: synthesized authData + clientDataJSON + P-256 sig, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) — **trace-verified, no inner revert** | [`0x34d6c4f1…cdb2695e`](https://voyager.online/tx/0x34d6c4f10b6af3a4fb02eb20418d08fe72b2d4f9bbd897fbe30ffddcdb2695e) | — | `0xef0b759813ac520` FRI ≈ 1.0772 STRK (**paymaster-paid**; 2x sha256 + P-256 syscall + base64url + JSON prefix check) | ✅ SUCCEEDED + inner OE non-reverted |
 
 Reproduction script: `shhh:scripts/smoke-test-7.mjs`.
 P-256 priv (committed for replay): `0x04e678b92fac610453971f99b44e0171cd106f750451161ea04a842127ae9982`.
@@ -70,7 +105,7 @@ Envelope: `[V2_SNIP12, owner_id=0, kind='WEBAUTHN_P256', ByteArray(authData), By
 | Step | Tx | Block | Fee | Status |
 |---|---|---|---|---|
 | Deploy V8.4 instance via UDC (ED25519 primary, label `'smoke2'`) | [`0x4e1dd84a…cc9a76`](https://voyager.online/tx/0x4e1dd84a839861ba7654b2f97f05c62e06c78b7a9f73c63ba358b146acc9a76) | — | ~0.519 STRK (deployer-paid) | ✅ |
-| `execute_from_outside_v2` via Chipi paymaster (Ed25519 sig over 64 hex-ASCII bytes of message_hash, Garaga calldata, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) | [`0x1c1b7828…0cbeccd`](https://voyager.online/tx/0x1c1b7828ad228c1ba8c63fe4e15ca741e9df5548ede28e734323e8320cbeccd) | — | `0xb25ee4fd16d660` FRI ≈ 0.0502 STRK (**paymaster-paid**) | ✅ SUCCEEDED ACCEPTED_ON_L2 |
+| `execute_from_outside_v2` via Chipi paymaster (Ed25519 sig over 64 hex-ASCII bytes, Garaga v1.0.1 BN math, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) — **trace-verified, no inner revert** | [`0x7472be95…25f86dbb`](https://voyager.online/tx/0x7472be95c30c4e49e053888fb8cda588ddc29372fabdacca3f01b0225f86dbb) | — | `0x63c14420af6eac0` FRI ≈ 0.4495 STRK (**paymaster-paid**; BN curve arithmetic is the dominant cost) | ✅ SUCCEEDED + inner OE non-reverted |
 
 Reproduction script: `shhh:scripts/smoke-test-2.mjs`.
 Ed25519 keypair (committed for replay):
@@ -112,7 +147,7 @@ Envelope: `[V2_SNIP12, owner_id=0, kind='ED25519', ...garaga_payload]` (97 felts
 | Step | Tx | Block | Fee | Status |
 |---|---|---|---|---|
 | Deploy V8.4 instance via UDC (EIP-191 primary, label `'smoke3'`) | [`0x6e8d3ad4…40c515`](https://voyager.online/tx/0x6e8d3ad4232b2e25ba870189e37bdb3608225e98655babb09310bc7cd40c515) | — | ~0.566 STRK (deployer-paid) | ✅ |
-| `execute_from_outside_v2` via Chipi paymaster (EIP-191 `personal_sign`, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) | [`0x7ccb7aa7…c4c98`](https://voyager.online/tx/0x7ccb7aa7974f7ea877765049323656af08b0440bad78acbbe4236cfba5c4c98) | — | `0x7b6648bef7b0e2` FRI ≈ 0.0348 STRK (**paymaster-paid**) | ✅ SUCCEEDED ACCEPTED_ON_L2 |
+| `execute_from_outside_v2` via Chipi paymaster (EIP-191 `personal_sign`, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) — **trace-verified, no inner revert** | [`0x677f414e…4993b15`](https://voyager.online/tx/0x677f414ecf214b2a2b4419ba2ee66fa656c179db66425ccdc013acad4993b15) | — | `0x64457a11bb58200` FRI ≈ 0.4519 STRK (**paymaster-paid**; secp256k1 recover + keccak is the dominant cost) | ✅ SUCCEEDED + inner OE non-reverted |
 
 Reproduction script: `shhh:scripts/smoke-test-3.mjs`.
 EVM keypair (committed for replay): priv `0x3137d63b6749683a541326aa1fa135cf4c859b6af89e82c765526e687085e0b4`, EVM address `0x45C5Ff13576f0bbd92189008320926c807C35A95`.
@@ -151,7 +186,7 @@ Envelope: `[V2_SNIP12, owner_id=0, kind='EIP191_SECP256K1', r_low, r_high, s_low
 | Step | Tx | Block | Fee | Status |
 |---|---|---|---|---|
 | Deploy V8.4 instance via UDC (STARK primary, label `'smoke15'`) | [`0x66e4abc8…3c3692`](https://voyager.online/tx/0x66e4abc8d848fe86378207e5130896459eed6bd25696db982e6e558333c3692) | — | ~0.496 STRK (deployer-paid) | ✅ |
-| `execute_from_outside_v2` via Chipi paymaster (STARK ECDSA, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) | [`0x4d22f2f2…0384e3d`](https://voyager.online/tx/0x4d22f2f21afd66dbf958aa11259ae8ec1e914d5f391586e74271b3e0384e3d) | 9,924,493 | `0x7ec7efda93ad40` FRI ≈ 0.0357 STRK (**paymaster-paid**) | ✅ SUCCEEDED ACCEPTED_ON_L2 |
+| `execute_from_outside_v2` via Chipi paymaster (STARK ECDSA, `caller='ANY_CALLER'`, no-op `STRK.transfer(self, 0)`) — **trace-verified, no inner revert** | [`0x5dc71618…aa4daf4f`](https://voyager.online/tx/0x5dc7161835d9cba246b3bdb9c5ba7613c424ab2f9bb380111799affaa4daf4f) | — | `0xdf806e96f13b5e` FRI ≈ 0.0629 STRK (**paymaster-paid**) | ✅ SUCCEEDED + inner OE non-reverted |
 
 Reproduction script: `shhh:scripts/smoke-test-15.mjs` (in the Shhh frontend repo).
 Stark keypair: pk `0x0405746fda3f5e994c38e51f895d71ccd4d6930008a188f5729cc7dc0a22f203`, pubkey `0x52aa899ffdeb447003e0c0edfcd12e7a3933fd05c69fd370504e91c674951c4` (committed for replay).
