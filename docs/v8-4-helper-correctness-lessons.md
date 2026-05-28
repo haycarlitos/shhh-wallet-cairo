@@ -147,6 +147,38 @@ A clean port will have:
 
 ---
 
+## Appendix — receipt-correctness adjacencies
+
+The two items below bit the same 2026-05-26 → 2026-05-28 audit-trail thread but sit one step removed from the shape-vs-semantic principle that unifies Items #1-#4. They're documented here so a future SDK port has the full set of grep targets — not because they collapse into the same family. Trying to force them under the same umbrella weakens the lead claim; recording them as explicit adjacencies preserves the discipline.
+
+### A. Felt-padding at the receipt-output surface
+
+- **Symptom**: 2026-05-28 ED25519 prod receipt's OE tx hash rendered as 60 hex chars. Independent re-trace by the Shhh side required three leading zeros to resolve on RPC. Same paste-truncation pattern showed up on the 2026-05-23 Python hashes (62-63 chars needing 1-2 zeros each). Receipts authentic, but consumers had to guess the padding.
+- **Mechanism**: Starknet felt252 tx hashes, addresses, and class hashes are 252-bit values. Canonical RPC representation requires `0x` + 64 lowercase hex characters with leading zeros. JS `BigInt(x).toString(16)` (and Python `hex(int(x, 16))[2:]`) silently drops them. The shape on the wire was correct (parsable as a felt252); the shape in the receipt artifact was lossy.
+- **Fix**: Add a `padTxHash64` helper applied at every receipt-writing site (deploy tx, OE tx, walletAddress, classHash) — `chipi-pay/sdks` PR #278. Reference: `scripts/trace-helpers.ts::padTxHash64`. The 60-char ED25519 OE hash is the pinned regression fixture; the future-safe property is "no receipt artifact gets written without canonical felt-padding."
+- **Pinned test**: `chipi-pay/sdks` PR #278 — `scripts/__tests__/trace-helpers.test.ts::padTxHash64 normalizes the 60-char regression case`.
+- **Grep target**:
+  ```bash
+  grep -nE '\b(toString|hex)\(16\)' <new-sdk-tree>
+  grep -nE '\b0x[0-9a-fA-F]{1,63}["\047]' <new-sdk-tree>  # any non-64-char hex literal touching a receipt path
+  ```
+- **Why it's adjacent, not core**: This is a receipt-WRITER concern — preserving the semantic 252-bit felt when serializing to a stringified artifact. Items #1-#4 are receipt-VERIFIER concerns — checking the semantic of a signal at read time. Same family loosely (both involve a representation that drops information), different surface in practice.
+
+### B. Library version-default drift
+
+- **Symptom**: First `--apply` of the Python re-smoke runner against deployed wallets returned `False` from the `_is_deployed` check on wallets that *were* on chain. A broad `except ClientError` masked the underlying RPC rejection.
+- **Mechanism**: starknet-py 0.30.0 nominally targets Starknet RPC 0.10.0 and defaults the `block_id` parameter on `get_class_hash_at` to `"pre_confirmed"` — a new pending-block status introduced in RPC 0.10. No public Starknet RPC at the time accepted that value: Infura served 0.8.1, Lava served 0.8.1, drpc.org served 0.10.2 (close but not the exact 0.10.0 default). All three rejected with `-32602 Invalid params`. The library shipped optimistic about its target server version; the deployed infrastructure hadn't caught up.
+- **Fix**: Pass `block_number="latest"` explicitly so the call never falls back to the library default — `chipi-pay/sdks` PR #280. Tighten the exception handler to surface the underlying RPC error rather than collapsing to a False return.
+- **Pinned test**: `chipi-pay/sdks` PR #280 — `python/tests/test_smoke_helpers.py::is_deployed handles RPC < 0.10 (no pre_confirmed support)`.
+- **Grep target**:
+  ```bash
+  grep -nE 'get_class_hash_at\(' <new-sdk-tree>   # any call should pass explicit block_id / block_number
+  grep -nE 'except\s+\w*Error\b' <new-sdk-tree>   # check whether handler is narrow enough to not mask RPC rejects
+  ```
+- **Why it's adjacent, not core**: This isn't shape-vs-semantic at all — it's "library defaults assume newer infrastructure than what's deployed." A different trap family. Worth flagging for any future SDK port because whichever Starknet client library the new SDK picks will have its own version-default landmines (e.g., starknet-rs / starknet.js / Go-Starknet-Client all set their own RPC-version defaults that drift differently from server reality).
+
+---
+
 ## Contact
 
 - Maintainer: Carlos Castillo — `carlos@chipipay.com`
