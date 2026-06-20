@@ -104,7 +104,10 @@ fn setup() -> (ContractAddress, ContractAddress, felt252) {
     start_cheat_block_timestamp_global(1_000);
     start_cheat_caller_address(account, account);
     let s = IShhhSessionsDispatcher { contract_address: account };
-    s.add_or_update_session_key(session_key, SESSION_VALID_UNTIL, 10_u32, array![selector!("transfer")]);
+    s
+        .add_or_update_session_key(
+            session_key, SESSION_VALID_UNTIL, 10_u32, array![selector!("transfer")],
+        );
     s.set_spending_policy(session_key, token, MAX_PER_CALL, MAX_PER_WINDOW, WINDOW_SECONDS);
     stop_cheat_caller_address(account);
 
@@ -125,9 +128,7 @@ fn build_session_spend(
     // ERC-20 `transfer` calldata = [recipient, amount.low, amount.high] —
     // exactly the slots `check_and_update_spending` reads for the amount.
     let calldata: Array<felt252> = array![RECIPIENT, amount.low.into(), amount.high.into()];
-    let call = Call {
-        to: token, selector: selector!("transfer"), calldata: calldata.span(),
-    };
+    let call = Call { to: token, selector: selector!("transfer"), calldata: calldata.span() };
     let oe = OutsideExecution {
         caller: 'ANY_CALLER'.try_into().unwrap(),
         nonce,
@@ -139,9 +140,7 @@ fn build_session_spend(
     let hash = compute_snip12_hash(@oe, account.into(), 'SN_MAIN');
     let session_kp = StarkCurveKeyPairImpl::from_secret_key(SESSION_SECRET);
     let (r, s) = session_kp.sign(hash).unwrap();
-    let envelope: Array<felt252> = array![
-        session_kp.public_key, r, s, SESSION_VALID_UNTIL.into(),
-    ];
+    let envelope: Array<felt252> = array![session_kp.public_key, r, s, SESSION_VALID_UNTIL.into()];
     (oe, envelope)
 }
 
@@ -221,15 +220,11 @@ fn test_e2e_over_window_cumulative_reverts() {
     let src9 = ISRC9_V2Dispatcher { contract_address: account };
 
     // First in-cap spend: 100 ≤ 150 → lands. spent_in_window = 100.
-    let (oe1, env1) = build_session_spend(
-        account, token, 100_u256, 'win-1', 1_000_000, 1_003_600,
-    );
+    let (oe1, env1) = build_session_spend(account, token, 100_u256, 'win-1', 1_000_000, 1_003_600);
     src9.execute_from_outside_v2(oe1, env1.span());
 
     // Second spend 100: cumulative 200 > max_per_window (150) → revert.
-    let (oe2, env2) = build_session_spend(
-        account, token, 100_u256, 'win-2', 1_000_000, 1_003_600,
-    );
+    let (oe2, env2) = build_session_spend(account, token, 100_u256, 'win-2', 1_000_000, 1_003_600);
     src9.execute_from_outside_v2(oe2, env2.span());
 }
 
@@ -245,9 +240,7 @@ fn test_e2e_window_rollover_resets_budget() {
 
     // First spend at t=1_000_001 → window anchors here, spent = 100.
     start_cheat_block_timestamp_global(1_000_001);
-    let (oe1, env1) = build_session_spend(
-        account, token, 100_u256, 'roll-1', 1_000_000, 1_003_600,
-    );
+    let (oe1, env1) = build_session_spend(account, token, 100_u256, 'roll-1', 1_000_000, 1_003_600);
     src9.execute_from_outside_v2(oe1, env1.span());
 
     // Advance exactly one window: now = window_start + window_seconds.
