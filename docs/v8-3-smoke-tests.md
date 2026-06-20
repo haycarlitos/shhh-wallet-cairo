@@ -10,7 +10,7 @@
 
 **5 OE smokes + 1 V8.4 deploy smoke + governance propose all passing (trace-verified, no silent reverts).** V8.3 dispatcher proven via V8.1 carry-forward (Test 1, 2026-05-10). V8.4 deploy + state readback (Test 1a, 2026-05-15). **Four V8.4 paymaster-sponsored OEs through Chipi completed 2026-05-18 with trace-verified inner-call success**: STARK (Test 15), EIP-191 MetaMask `personal_sign` (Test 3), ED25519 Phantom/Solana (Test 2), WEBAUTHN_P256 passkey (Test 7). **Test 11 propose phase landed 2026-05-18** — 48h timelock on `propose_add_owner` now running; execute phase opens 2026-05-20T23:28Z.
 
-All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. Recovery, threshold, sessions, and the other six kinds (raw secp256k1, raw P-256, EIP-712, JWT-ES256, JWT-Apple-sub, BLS) are still snforge-only (259/259).
+All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. **Session-key spending caps smoked on mainnet 2026-06-20 (Test 14)** — in-cap OE succeeded, over-cap reverted on-chain with `'Spending: exceeds per-call'`. Recovery, threshold, and the other six kinds (raw secp256k1, raw P-256, EIP-712, JWT-ES256, JWT-Apple-sub, BLS) are still snforge-only (264/264, incl. the new `account_sessions_e2e.cairo`).
 
 **Two corrections from earlier in this cycle (retracted receipts, see commit history)**:
 1. The "V8.2 verifier" hashes in `class-hashes.md` had **never actually been declared on mainnet** (despite the 2026-05-10 doc claim). All 10 finally declared 2026-05-18 (~100 STRK actual fee; BLS was already on chain).
@@ -299,14 +299,53 @@ Post-deploy state readback (mainnet):
 | 11 | Add a secondary owner via timelocked governance | ❌ not smoked | Run `propose_add_owner` + wait 48h + `execute_add_owner` and confirm the new owner can sign |
 | 12 | Threshold envelope (2-of-3, mixed kinds) | ❌ not smoked | Set threshold=2 + add two more owners + sign one OE with two of them aggregated; confirm the third single signer alone can't satisfy |
 | 13 | Recovery flow (initiate + cancel + finalize) | ❌ not smoked | Add a `ROLE_GUARDIAN` + initiate recovery from guardian + confirm `cancel_recovery` works (single-owner cancel) AND that `finalize_recovery` works after 7 days |
-| 14 | Session key + spending policy | ❌ not smoked | Add a session key + set spending policy + sign 4-element session OE + confirm spending cap fires when exceeded |
+| 14 | Session key + spending policy | ✅ **smoked 2026-06-20** (V8.4) | Done — see [Test 14 detail](#test-14--session-key-spending-cap-v84) below. In-cap session OE succeeded; over-cap reverted on-chain with `'Spending: exceeds per-call'`. |
 | 15 | Paymaster-sponsored OE (Chipi or AVNU) | ❌ not smoked | Sign an OE with `caller='ANY_CALLER'` + relay via Chipi paymaster + confirm fee paid by paymaster, not user |
 
 **Recommended priority for production confidence**:
 1. **Test 15 (paymaster-sponsored OE)** is the single highest-leverage smoke test for Chipi integration. Until this works on mainnet, the paymaster integration is theoretical.
 2. Test 12 (threshold envelope) closes the M-2 verifier-reentrancy guard in the cross-owner aggregation path.
 3. Test 13 (recovery) is the audit C-1 fix's load-bearing demo — guardian can initiate but can't sign arbitrary OEs.
-4. Tests 11 + 14 are nice-to-have for production confidence but not gating.
+4. Test 11 is nice-to-have for production confidence but not gating. (Test 14 ✅ done — see below.)
+
+---
+
+## Test 14 — session-key spending cap (V8.4)
+
+**Smoked 2026-06-20 on mainnet against the live V8.4 `ShhhAccount` class
+`0x075dfb396…fa58a`.** This is the on-chain proof that the deployed class
+enforces `check_and_update_spending` (`account.cairo:397`) in the execute
+path: an over-cap session-signed call is rejected *before* the calls run.
+In-CI mirror: `tests/account_sessions_e2e.cairo`. Driver:
+`scripts/ts/mainnet-test-14-spending-cap.ts` (+ `force-invoke.ts` to land
+the deliberately-reverting tx, since fee-estimation tooling aborts on the
+simulated revert and never broadcasts).
+
+**Setup**: fresh V8.4 wallet, primary STARK owner. Session key whitelisted
+for `approve`, with spending policy on a token: `max_per_call = 1_000000`,
+`max_per_window = 1_500000`, `window_seconds = 3600`. `approve` (not
+`transfer`) is the metered op so the in-cap success demonstrates the cap
+allowing the call without depending on the wallet holding a balance.
+
+| Step | Tx | Result | Block |
+|---|---|---|---|
+| Deploy V8.4 wallet `0x004e427a…92e01` | [`0x052b18ea…1047cbf`](https://starkscan.co/tx/0x052b18eacc64448708d6e83bad41e89473bdda8facd6f08280549e4751047cbf) | ✅ SUCCEEDED | 10995902 |
+| Register session key + spending policy (owner-signed OE) | [`0x0328f305…46dc3047`](https://starkscan.co/tx/0x0328f30555e9c685e8ac4a0c7be8bfdf95e353396af7db333cf9696846dc3047) | ✅ SUCCEEDED | 10995921 |
+| **In-cap** session OE — `approve(spender, 500000)` (≤ cap) | [`0x01bb021c…32ab3fd`](https://starkscan.co/tx/0x01bb021cd8b3e6c4b9a37c4319feee5d4e2037c33da8b47ded604dc8b32ab3fd) | ✅ **SUCCEEDED** | 10995928 |
+| **Over-cap** session OE — `approve(spender, 5000000)` (5× cap) | [`0x40c5e97f…4b2b8f`](https://starkscan.co/tx/0x40c5e97fec54642e753821b556df5963cdd839583356726d4ad313eff4b2b8f) | ⛔ **REVERTED** — `'Spending: exceeds per-call'` | 10995987 |
+
+The over-cap revert reason on-chain is the felt
+`0x5370656e64696e673a2065786365656473207065722d63616c6c`
+(`'Spending: exceeds per-call'`), raised from class `0x075dfb396…fa58a`
+selector `0x034cc13b…` (`execute_from_outside_v2`) — i.e. the deployed V8.4
+account, not a local build. Total fee for the four txs: ~0.61 STRK
+(deployer `0x64b1cf9c…`).
+
+**What this closes**: the session-key spending cap is now proven
+end-to-end on the deployed class — over-cap rejected atomically, in-cap
+allowed — not just in `snforge`. Same-window cumulative cap and window
+rollover remain CI-only (`account_sessions_e2e.cairo`); the per-call gate
+is the load-bearing one for autonomous-spend safety and is now on-chain.
 
 ---
 

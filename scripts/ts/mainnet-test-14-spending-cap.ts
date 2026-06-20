@@ -63,6 +63,7 @@
  * docs/class-hashes.md; override via SHHH_ACCOUNT_CLASS / STARK_VERIFIER_CLASS.
  */
 
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { RpcProvider, Account, ec, hash, shortString } from 'starknet';
 import { computeSnip12Hash, type OutsideExecution } from './snip12-hash';
 import { computeShhhAddress } from './compute-wallet-address';
@@ -72,6 +73,11 @@ import { computeShhhAddress } from './compute-wallet-address';
 // ----------------------------------------------------------------
 
 const SUBMIT = process.argv.includes('--submit');
+// --sncast: emit ready-to-run `sncast invoke` commands against a keystore
+// account (default deployer_oz) instead of submitting with a raw key. The
+// keystore password stays local; no private key passes through this output.
+const SNCAST = process.argv.includes('--sncast');
+const SNCAST_ACCOUNT = process.env.SNCAST_ACCOUNT ?? 'deployer_oz';
 
 const RPC = process.env.STARKNET_RPC ?? 'https://starknet-rpc.publicnode.com';
 
@@ -112,8 +118,35 @@ const STARKSCAN_API = process.env.STARKSCAN_API_KEY;
 // without secrets).
 // ----------------------------------------------------------------
 
-const OWNER_PK = process.env.OWNER_PK ?? (SUBMIT ? required('OWNER_PK') : '0x1');
-const SESSION_PK = process.env.SESSION_PK ?? (SUBMIT ? required('SESSION_PK') : '0x2');
+// Ephemeral owner + session keys for the throwaway test wallet. They must
+// stay stable across the deploy and the OE invokes (the session pubkey is
+// embedded in the setup calldata and every OE signature is bound to them),
+// so for real runs they're persisted to a gitignored local file — never
+// printed into chat. A pure dry-run uses dummy keys.
+const KEYS_FILE = new URL('./.test14-keys.json', import.meta.url).pathname;
+
+function resolveKeys(): { ownerPk: string; sessionPk: string } {
+  if (process.env.OWNER_PK && process.env.SESSION_PK) {
+    return { ownerPk: process.env.OWNER_PK, sessionPk: process.env.SESSION_PK };
+  }
+  if (SNCAST || SUBMIT) {
+    if (existsSync(KEYS_FILE)) {
+      const j = JSON.parse(readFileSync(KEYS_FILE, 'utf8'));
+      return { ownerPk: j.ownerPk, sessionPk: j.sessionPk };
+    }
+    const gen = () => '0x' + Buffer.from(ec.starkCurve.utils.randomPrivateKey()).toString('hex');
+    const keys = { ownerPk: gen(), sessionPk: gen() };
+    writeFileSync(
+      KEYS_FILE,
+      JSON.stringify({ ...keys, note: 'ephemeral test14 keys — gitignored, throwaway' }, null, 2),
+    );
+    console.log(`generated ephemeral owner+session keys -> ${KEYS_FILE} (gitignored)\n`);
+    return keys;
+  }
+  return { ownerPk: '0x1', sessionPk: '0x2' };
+}
+
+const { ownerPk: OWNER_PK, sessionPk: SESSION_PK } = resolveKeys();
 
 const OWNER_PUBKEY = BigInt(ec.starkCurve.getStarkKey(OWNER_PK));
 const SESSION_PUBKEY = BigInt(ec.starkCurve.getStarkKey(SESSION_PK));
@@ -339,6 +372,88 @@ async function relayOe(
 }
 
 // ----------------------------------------------------------------
+// sncast command emitter (two phases)
+// ----------------------------------------------------------------
+
+function sncastInvoke(wallet: string, calldata: Felt[]): string {
+  return (
+    `sncast --account ${SNCAST_ACCOUNT} invoke \\\n` +
+    `  --url ${RPC} \\\n` +
+    `  --contract-address ${wallet} \\\n` +
+    `  --function execute_from_outside_v2 \\\n` +
+    `  --calldata ${calldata.join(' ')}`
+  );
+}
+
+function emitSncast(spender: string): void {
+  const wallet = process.env.WALLET_ADDRESS ?? '';
+
+  if (!wallet) {
+    // Phase 1 — deploy the throwaway V8.4 wallet.
+    const ctor: Felt[] = [
+      shortString.encodeShortString('STARK'),
+      hex(STARK_VERIFIER_CLASS),
+      hex(1),
+      hex(OWNER_PUBKEY),
+      shortString.encodeShortString('primary'),
+    ];
+    const salt = hex(OWNER_PUBKEY);
+    console.log('PHASE 1 — deploy the test wallet (class is already declared on mainnet):\n');
+    console.log(
+      `sncast --account ${SNCAST_ACCOUNT} deploy \\\n` +
+        `  --url ${RPC} \\\n` +
+        `  --class-hash ${SHHH_ACCOUNT_CLASS} \\\n` +
+        `  --constructor-calldata ${ctor.join(' ')} \\\n` +
+        `  --salt ${salt}`,
+    );
+    console.log('\nThen re-run this with the deployed address to get the 3 OE invokes:');
+    console.log(`  WALLET_ADDRESS=0x<deployed> npm run test14 -- --sncast`);
+    console.log('\n(sncast will prompt for the deployer_oz keystore password locally.)');
+    return;
+  }
+
+  // Phase 2 — build + sign the three OEs against the real wallet address.
+  const setup = buildSetupOe(wallet);
+  const inCap = buildSpendOe(wallet, spender, IN_CAP_AMOUNT);
+  const overCap = buildSpendOe(wallet, spender, OVER_CAP_AMOUNT);
+
+  // Machine-readable companion so a runner can broadcast without parsing
+  // stdout (gitignored alongside the keys file).
+  const INVOKES_FILE = new URL('./.test14-invokes.json', import.meta.url).pathname;
+  writeFileSync(
+    INVOKES_FILE,
+    JSON.stringify(
+      {
+        wallet,
+        account: SNCAST_ACCOUNT,
+        url: RPC,
+        execute_before: Number(EXEC_BEFORE),
+        steps: [
+          { label: 'setup', expect: 'SUCCEEDED', calldata: serializeOeCall(setup.oe, setup.calls, setup.signature) },
+          { label: 'in-cap', expect: 'SUCCEEDED', calldata: serializeOeCall(inCap.oe, inCap.calls, inCap.signature) },
+          { label: 'over-cap', expect: 'REVERTED', reason: EXPECTED_REVERT, calldata: serializeOeCall(overCap.oe, overCap.calls, overCap.signature) },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  console.log(`PHASE 2 — wallet ${wallet}\n`);
+  console.log('STEP 1/3 — register session key + spending policy (owner-signed). Expect SUCCESS:\n');
+  console.log(sncastInvoke(wallet, serializeOeCall(setup.oe, setup.calls, setup.signature)));
+  console.log('\nSTEP 2/3 — in-cap session spend. Expect SUCCESS:\n');
+  console.log(sncastInvoke(wallet, serializeOeCall(inCap.oe, inCap.calls, inCap.signature)));
+  console.log('\nSTEP 3/3 — over-cap session spend. Expect REVERT ("Spending: exceeds per-call"):\n');
+  console.log(sncastInvoke(wallet, serializeOeCall(overCap.oe, overCap.calls, overCap.signature)));
+  console.log('\n' + '─'.repeat(68));
+  console.log('Run them in order. Paste the 3 tx hashes back and I will verify the');
+  console.log('receipts from the public RPC and fill in the Test 14 docs entry.');
+  console.log('Note: STEP 3 is EXPECTED to revert — that is the pass condition, not an error.');
+  console.log('OE time bounds are valid until', new Date(Number(EXEC_BEFORE) * 1000).toISOString(), '— rerun if it lapses.');
+}
+
+// ----------------------------------------------------------------
 // Main
 // ----------------------------------------------------------------
 
@@ -360,6 +475,12 @@ async function main(): Promise<void> {
   );
   console.log(`amounts:         in_cap=${IN_CAP_AMOUNT}  over_cap=${OVER_CAP_AMOUNT}`);
   console.log('');
+
+  // ---- sncast mode: emit copy-paste commands, no network calls ----
+  if (SNCAST) {
+    emitSncast(spender);
+    return;
+  }
 
   // ---- resolve / deploy the wallet ----
   let wallet = process.env.WALLET_ADDRESS ?? '';
