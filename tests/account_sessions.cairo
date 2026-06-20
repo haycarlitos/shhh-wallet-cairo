@@ -2,12 +2,11 @@
 //! ShhhAccount. Covers the self-gated mutators and the storage reads
 //! the frontend + indexer consume.
 //!
-//! Full session-signature verification (the 4-element OE path) needs a
-//! STARK-curve fixture + cheat_block_timestamp; that lives in
-//! `tests/account_sessions_e2e.cairo` and is added once the STARK
-//! session signer fixture generator is wired. For Phase 7 exit, the
-//! guards below prove the management API works and the V8 blocklist
-//! refuses governance / recovery / migration selectors.
+//! Full session-signature verification (the 4-element OE path) — driving
+//! an actual spend through a STARK session signature and asserting the
+//! spending caps fire — lives in `tests/account_sessions_e2e.cairo`. The
+//! guards below cover the management API: that it works and that the V8
+//! blocklist refuses governance / recovery / migration selectors.
 
 use shhh_wallet::session_key::interface::SessionData;
 use shhh_wallet::spending_policy::interface::SpendingPolicy;

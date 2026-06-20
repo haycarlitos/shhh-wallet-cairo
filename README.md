@@ -1,6 +1,6 @@
 # Shhh Wallet — Cairo
 
-> **Status:** **V8.3 live on Starknet mainnet** since 2026-05-11. 14 V8.x classes declared between 2026-04-28 and 2026-05-11 (~283 STRK cumulative declare cost). Active for new deploys: V8.3 `ShhhAccount` plus 10 V8.2 verifier classes. V8.0 / V8.1 / V8.2 `ShhhAccount` remain declared for legacy recognition only and are deprecated. V7 stays on mainnet for legacy users; V8.3 is the redeploy target for new accounts. Reference implementation for the upcoming **SNIP-108 Pluggable Signer Interface** ([draft](./docs/snip-draft-pluggable-signer.md), companion to merged Session Keys SNIP #163).
+> **Status:** **V8.4 live on Starknet mainnet** since 2026-05-15 (current class for new deploys). 15 V8.x classes declared between 2026-04-28 and 2026-05-15 (~327 STRK cumulative declare cost). Active for new deploys: V8.4 `ShhhAccount` (`0x075dfb39…`) plus 10 V8.2 verifier classes. V8.0 / V8.1 / V8.2 / V8.3 `ShhhAccount` remain declared for legacy recognition only and are deprecated. V7 stays on mainnet for legacy users; V8.4 is the redeploy target for new accounts. **Session-key spending caps are mainnet-smoked** (2026-06-20, Test 14): an over-cap session call reverts on-chain with `'Spending: exceeds per-call'` while an in-cap call succeeds. Reference implementation for the upcoming **SNIP-108 Pluggable Signer Interface** ([draft](./docs/snip-draft-pluggable-signer.md), companion to merged Session Keys SNIP #163).
 
 Pluggable-signer Starknet smart account: one account class authenticates owners signing under any of ten cryptographic primitives — STARK, Ed25519 (Phantom / Solana), secp256k1 raw, EIP-191 `personal_sign`, EIP-712 typed data, raw P-256, WebAuthn P-256 (Face ID / Touch ID), JWT-ES256 single-tenant Apple, JWT-ES256 sub-bound multi-tenant Apple, BLS12-381 min-sig — via `library_call_syscall` dispatch to separately-declared verifier classes. Multi-owner weighted threshold, timelocked governance, 7-day guardian recovery, and SNIP-163 session keys with spending caps stack on top.
 
@@ -12,17 +12,18 @@ Pluggable-signer Starknet smart account: one account class authenticates owners 
 | V8.0 | ⚠️ Deprecated (2026-05-07) | `0x01d6e475…ae3` | Pre-2026-05-07 self-review. Vulnerable to C-1 (guardian role bypass) + H-1 (bootstrap front-run). |
 | V8.1 | ⚠️ Deprecated (2026-05-10) | `0x01e7f69e…f363b5` | Pre-V8.2; `ISigner` trait missing `validate_pubkey` (M-1 partial only). |
 | V8.2 | ⚠️ Deprecated (2026-05-11) | `0x02a0b719…1a062` | Pre-2026-05-10 audit closeout; missing `finalize_recovery` validate, asymmetric `inside_verifier`, `bootstrap_from_sessions` validate. |
-| **V8.3** | ✅ **Mainnet (current)** | **`0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`** | Audit-closed against the 2026-05-10 V8.2 review (H-1, M-1 symmetric, M-2, M-3 executable). |
+| V8.3 | ⚠️ Deprecated (2026-05-15) | `0x03bc5392…6a87d9` | Audit-closed against the 2026-05-10 V8.2 review (H-1, M-1 symmetric, M-2, M-3 executable); superseded by V8.4. |
+| **V8.4** | ✅ **Mainnet (current)** | **`0x075dfb396145926bffa6beb659897f46cc082a50b211d80871cff7f1038fa58a`** | V8.3 + stranded-bootstrap recovery (`bootstrap_from_sessions_signed`) + guardian-OE `initiate_recovery` + 2026-05-12 audit C-1 closeout. Session/spending-policy + dispatcher paths are byte-identical to V8.3. **Use this for new deploys.** |
 
-Existing V8.0 / V8.1 / V8.2 wallets **cannot self-upgrade** to V8.3 — V8 deliberately ships without an `upgrade` selector. Migrating from a deprecated class requires deploying a fresh V8.3 account at a new address (the class hash is bound into the deterministic salt) and migrating assets manually.
+Existing V8.0–V8.3 wallets **cannot self-upgrade** to V8.4 — V8 deliberately ships without an `upgrade` selector. Migrating from a deprecated class requires deploying a fresh V8.4 account at a new address (the class hash is bound into the deterministic salt) and migrating assets manually.
 
-## V8.3 mainnet classes (pin these in your SDK)
+## V8.4 mainnet classes (pin these in your SDK)
 
-Active set: V8.3 `ShhhAccount` plus 10 V8.2 verifier classes. Full deploy record (per-tx hashes, fees, Voyager links, declare cycles): [`docs/class-hashes.md`](./docs/class-hashes.md). Per-tx + per-user-op cost map: [`docs/mainnet-deployment.md`](./docs/mainnet-deployment.md).
+Active set: V8.4 `ShhhAccount` plus 10 V8.2 verifier classes (verifier hashes are unchanged from V8.2 — only the account class changed). Full deploy record (per-tx hashes, fees, Voyager links, declare cycles): [`docs/class-hashes.md`](./docs/class-hashes.md). Per-tx + per-user-op cost map: [`docs/mainnet-deployment.md`](./docs/mainnet-deployment.md).
 
 | Contract | Class hash | Wallets / use case |
 |---|---|---|
-| `ShhhAccount` (V8.3) | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9` | The account contract |
+| `ShhhAccount` (V8.4) | `0x075dfb396145926bffa6beb659897f46cc082a50b211d80871cff7f1038fa58a` | The account contract |
 | `StarkVerifier` (V8.2) | `0x00d09209b2da9d49fc805ba26380ba4ce25aa641116c10eb178e1051a71dbf68` | Ready, Braavos, Ledger Starknet app, native |
 | `Ed25519Verifier` (V8.2) | `0x030a7dfc03e59cef6e41699e734abd2df53ce393a052221c02c6e07665949f74` | Phantom, Solflare, every Solana wallet |
 | `Secp256k1Verifier` (V8.2) | `0x03e81667a46bd5287e09a9600fa98d28fdc477735f2689f5f4e8e95f37b67b74` | Raw secp256k1 (programmatic / hardware) |
@@ -172,7 +173,7 @@ CI runs the same toolchain on every push and PR. See `.github/workflows/ci.yml`.
 - [`docs/class-hashes.md`](./docs/class-hashes.md) — 14 declared V8.x classes with reproduction commands + per-cycle costs.
 - [`docs/mainnet-deployment.md`](./docs/mainnet-deployment.md) — per-tx fees, per-user-operation cost map.
 - [`docs/v8-3-sdk-integration.md`](./docs/v8-3-sdk-integration.md) — 1200+ line SDK integration spec (TypeScript constants, envelope builders per kind, OE construction, paymaster routing, error mapping).
-- [`docs/v8-3-smoke-tests.md`](./docs/v8-3-smoke-tests.md) — mainnet smoke-test status (1 of 14 passed: STARK OE end-to-end; rest snforge-only).
+- [`docs/v8-3-smoke-tests.md`](./docs/v8-3-smoke-tests.md) — mainnet smoke-test status. Passed on mainnet: STARK / EIP-191 / ED25519 / WebAuthn OEs (Chipi paymaster), V8.4 deploy, governance propose, and **session-key spending caps (Test 14, 2026-06-20 — over-cap reverts on-chain, in-cap succeeds)**. Remaining (threshold, recovery finalize, other six kinds) are snforge-only.
 - [`docs/v8-3-m1-history.md`](./docs/v8-3-m1-history.md) — design rationale for the M-1 closure (V8.1 partial → V8.2 full → V8.3 wiring).
 - [`docs/snip-draft-pluggable-signer.md`](./docs/snip-draft-pluggable-signer.md) — SNIP-108 draft, V8.3 as reference implementation.
 - [`docs/snip-publish-process.md`](./docs/snip-publish-process.md) — submission process + lifecycle map for SNIP-108.

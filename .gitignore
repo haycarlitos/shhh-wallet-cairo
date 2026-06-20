@@ -8,3 +8,7 @@ scripts/ts/package-lock.json
 _internal/
 snip-108-forum-draft.md
 docs/chipi-handover.md
+
+# Ephemeral keys for the mainnet Test 14 driver (throwaway test wallet)
+scripts/ts/.test14-keys.json
+scripts/ts/.test14-invokes.json
