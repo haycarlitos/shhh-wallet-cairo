@@ -12,3 +12,4 @@ docs/chipi-handover.md
 # Ephemeral keys for the mainnet Test 14 driver (throwaway test wallet)
 scripts/ts/.test14-keys.json
 scripts/ts/.test14-invokes.json
+scripts/ts/.test13-state.json

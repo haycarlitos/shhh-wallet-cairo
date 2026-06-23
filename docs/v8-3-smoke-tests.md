@@ -298,7 +298,7 @@ Post-deploy state readback (mainnet):
 |---|---|---|---|
 | 11 | Add a secondary owner via timelocked governance | ❌ not smoked | Run `propose_add_owner` + wait 48h + `execute_add_owner` and confirm the new owner can sign |
 | 12 | Threshold envelope (2-of-3, mixed kinds) | ❌ not smoked | Set threshold=2 + add two more owners + sign one OE with two of them aggregated; confirm the third single signer alone can't satisfy |
-| 13 | Recovery flow (initiate + cancel + finalize) | ❌ not smoked | Add a `ROLE_GUARDIAN` + initiate recovery from guardian + confirm `cancel_recovery` works (single-owner cancel) AND that `finalize_recovery` works after 7 days |
+| 13 | Recovery flow (guardian initiate + owner cancel) | ⏳ **Phase A landed 2026-06-23** (V8.4) | Guardian-add proposed on wallet `0x75825349…3a0762` ([propose tx `0x1d51cac0…67038`](https://starkscan.co/tx/0x1d51cac098c52b7c6277788956488230bbf1f765abfab31a9f38d5d31e67038), op_id `0x4510f5c5…`); 48h `execute_add_owner` opens 2026-06-25T02:50Z. Phase B (`scripts/ts/mainnet-test-13-guardian-recovery.ts --phase b`) then runs: guardian-OE `initiate_recovery` (expect SUCCESS), guardian-OE with a non-recovery call (expect REVERT `'SHHH: signer not an owner'` — the V8.4 audit C-1 carve-out), owner-OE `cancel_recovery` (expect SUCCESS). `finalize_recovery` (7-day) still separate. |
 | 14 | Session key + spending policy | ✅ **smoked 2026-06-20** (V8.4) | Done — see [Test 14 detail](#test-14--session-key-spending-cap-v84) below. In-cap session OE succeeded; over-cap reverted on-chain with `'Spending: exceeds per-call'`. |
 | 15 | Paymaster-sponsored OE (Chipi or AVNU) | ❌ not smoked | Sign an OE with `caller='ANY_CALLER'` + relay via Chipi paymaster + confirm fee paid by paymaster, not user |
 
