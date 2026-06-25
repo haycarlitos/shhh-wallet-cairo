@@ -123,11 +123,26 @@ async function submit(
   provider: RpcProvider, acct: Account, wallet: string, label: string, calldata: Felt[],
   expect: 'SUCCEEDED' | 'REVERTED', reason?: string,
 ): Promise<boolean> {
-  const details = expect === 'REVERTED' ? { resourceBounds: await bounds(provider), tip: 0n } : undefined;
-  const { transaction_hash } = await acct.execute(
-    [{ contractAddress: wallet, entrypoint: 'execute_from_outside_v2', calldata }],
-    details as any,
-  );
+  const base: any = expect === 'REVERTED' ? { resourceBounds: await bounds(provider), tip: 0n } : {};
+  const call = [{ contractAddress: wallet, entrypoint: 'execute_from_outside_v2', calldata }];
+  // Explicit nonce + retry: avoids the sequential-nonce race where `latest`
+  // lags behind a just-landed prior tx (RPC returns NonceTooOld).
+  let transaction_hash = '';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const nonce = await acct.getNonce('latest');
+    try {
+      ({ transaction_hash } = await acct.execute(call, { ...base, nonce } as any));
+      break;
+    } catch (e) {
+      const m = String((e as any)?.message ?? e);
+      if ((m.includes('Nonce') || m.includes('nonce')) && attempt < 5) {
+        console.log(`    nonce lag (attempt ${attempt + 1}) — re-fetching in 8s…`);
+        await sleep(8000);
+        continue;
+      }
+      throw e;
+    }
+  }
   console.log(`  ${label}: ${transaction_hash}\n    https://starkscan.co/tx/${transaction_hash}`);
   const r = await waitReceipt(provider, transaction_hash);
   const exec = r.execution_status ?? r.executionStatus;
@@ -187,34 +202,43 @@ async function phaseB(): Promise<void> {
   const GUARDIAN_ID = 1;
   if (nowSec < BigInt(st.validAfter)) throw new Error(`timelock not elapsed; wait until ${new Date(st.validAfter * 1000).toISOString()}`);
 
-  console.log(`PHASE B — wallet ${w}\n`);
+  const START = Number(process.env.START_STEP ?? '1'); // resume point (steps already on-chain are skipped)
+  console.log(`PHASE B — wallet ${w}${START > 1 ? `  (resuming at step ${START})` : ''}\n`);
   let pass = true;
 
   // 1. execute_add_owner(op_id, STARK, [guardianPub], GUARDIAN, 1, 'guardian') — owner OE, expect SUCCESS.
-  console.log('1/4 execute_add_owner (install guardian) — expect SUCCESS:');
-  pass = (await submit(provider, acct, w, 'execute_add_owner', buildOe(w, [{
-    contractAddress: w, entrypoint: 'execute_add_owner',
-    calldata: [st.opId, hx(STARK), hx(1), hx(pub(st.guardianPk)), hx(ROLE_GUARDIAN), hx(1), hx(shortString.encodeShortString('guardian'))],
-  }], st.ownerPk, 0), 'SUCCEEDED')) && pass;
+  if (START <= 1) {
+    console.log('1/4 execute_add_owner (install guardian) — expect SUCCESS:');
+    pass = (await submit(provider, acct, w, 'execute_add_owner', buildOe(w, [{
+      contractAddress: w, entrypoint: 'execute_add_owner',
+      calldata: [st.opId, hx(STARK), hx(1), hx(pub(st.guardianPk)), hx(ROLE_GUARDIAN), hx(1), hx(shortString.encodeShortString('guardian'))],
+    }], st.ownerPk, 0), 'SUCCEEDED')) && pass;
+  } else console.log('1/4 execute_add_owner — SKIPPED (already on-chain: owner_count=2)');
 
   // 2. guardian OE initiate_recovery(proposer=GUARDIAN_ID, ...) — expect SUCCESS (carve-out positive).
-  console.log('2/4 guardian initiate_recovery — expect SUCCESS:');
-  pass = (await submit(provider, acct, w, 'guardian_initiate_recovery', buildOe(w, [{
-    contractAddress: w, entrypoint: 'initiate_recovery',
-    calldata: [hx(GUARDIAN_ID), hx(STARK), hx(1), hx(pub(st.recoveryPk)), hx(ROLE_OWNER), hx(1), hx(shortString.encodeShortString('recovered'))],
-  }], st.guardianPk, GUARDIAN_ID), 'SUCCEEDED')) && pass;
+  if (START <= 2) {
+    console.log('2/4 guardian initiate_recovery — expect SUCCESS:');
+    pass = (await submit(provider, acct, w, 'guardian_initiate_recovery', buildOe(w, [{
+      contractAddress: w, entrypoint: 'initiate_recovery',
+      calldata: [hx(GUARDIAN_ID), hx(STARK), hx(1), hx(pub(st.recoveryPk)), hx(ROLE_OWNER), hx(1), hx(shortString.encodeShortString('recovered'))],
+    }], st.guardianPk, GUARDIAN_ID), 'SUCCEEDED')) && pass;
+  } else console.log('2/4 guardian initiate_recovery — SKIPPED (already on-chain: pending recovery active)');
 
   // 3. guardian OE with a non-recovery call — expect REVERT 'SHHH: signer not an owner' (carve-out negative).
-  console.log("3/4 guardian signs a NON-recovery OE — expect REVERT 'SHHH: signer not an owner':");
-  pass = (await submit(provider, acct, w, 'guardian_arbitrary_oe', buildOe(w, [{
-    contractAddress: STRK, entrypoint: 'transfer', calldata: [w, hx(0), hx(0)],
-  }], st.guardianPk, GUARDIAN_ID), 'REVERTED', 'SHHH: signer not an owner')) && pass;
+  if (START <= 3) {
+    console.log("3/4 guardian signs a NON-recovery OE — expect REVERT 'SHHH: signer not an owner':");
+    pass = (await submit(provider, acct, w, 'guardian_arbitrary_oe', buildOe(w, [{
+      contractAddress: STRK, entrypoint: 'transfer', calldata: [w, hx(0), hx(0)],
+    }], st.guardianPk, GUARDIAN_ID), 'REVERTED', 'SHHH: signer not an owner')) && pass;
+  }
 
-  // 4. owner OE cancel_recovery(0) — expect SUCCESS.
-  console.log('4/4 owner cancel_recovery — expect SUCCESS:');
-  pass = (await submit(provider, acct, w, 'cancel_recovery', buildOe(w, [{
-    contractAddress: w, entrypoint: 'cancel_recovery', calldata: [hx(0)],
-  }], st.ownerPk, 0), 'SUCCEEDED')) && pass;
+  // 4. owner OE cancel_recovery(0) — expect SUCCESS (clears the active pending recovery).
+  if (START <= 4) {
+    console.log('4/4 owner cancel_recovery — expect SUCCESS:');
+    pass = (await submit(provider, acct, w, 'cancel_recovery', buildOe(w, [{
+      contractAddress: w, entrypoint: 'cancel_recovery', calldata: [hx(0)],
+    }], st.ownerPk, 0), 'SUCCEEDED')) && pass;
+  }
 
   console.log(`\n=> Test 13a ${pass ? 'ALL PASS ✅' : 'FAILED ❌'}`);
   if (!pass) process.exit(1);

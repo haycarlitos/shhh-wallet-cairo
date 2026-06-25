@@ -16,7 +16,7 @@ All four Chipi Cycle-1 kinds are now production-validated. Governance propose-ph
 1. The "V8.2 verifier" hashes in `class-hashes.md` had **never actually been declared on mainnet** (despite the 2026-05-10 doc claim). All 10 finally declared 2026-05-18 (~100 STRK actual fee; BLS was already on chain).
 2. First-attempt smoke receipts (2026-05-18 morning) had an off-by-60 bug in the OE validity window (`window = 7260 > MAX_ANY_CALLER_VALIDITY_SECONDS = 7200`). **Chipi paymaster silently caught the wallet-level revert and returned outer-tx `SUCCEEDED`**, so the original receipts looked passing. Smoke scripts now assert trace-level non-revert after every OE.
 
-**Bottom line for Chipi Pay integration**: V8.4 + V8.2 verifiers (now all declared) + Chipi paymaster is production-validated for all four Cycle-1 cross-ecosystem signer kinds — Starknet-native (STARK), MetaMask (EIP-191), Phantom (ED25519), and passkeys (WEBAUTHN_P256). The V8.4-specific paths (`bootstrap_from_sessions_signed`, guardian-OE `initiate_recovery`) deploy cleanly but haven't been exercised end-to-end yet.
+**Bottom line for Chipi Pay integration**: V8.4 + V8.2 verifiers (now all declared) + Chipi paymaster is production-validated for all four Cycle-1 cross-ecosystem signer kinds — Starknet-native (STARK), MetaMask (EIP-191), Phantom (ED25519), and passkeys (WEBAUTHN_P256). The guardian-OE `initiate_recovery` carve-out (audit C-1) is now smoked end-to-end on mainnet (Test 13, 2026-06-25 — guardian initiates, guardian's non-recovery OE reverts, owner cancels). The other V8.4-specific path (`bootstrap_from_sessions_signed`) deploys cleanly but isn't exercised end-to-end yet.
 
 **Chipi paymaster observation (action item)**: `paymaster_executeSponsoredRaw` currently returns top-level `SUCCEEDED` even when the inner `execute_from_outside_v2` call reverts. Caller has no signal from the receipt alone. Recommend Chipi propagate inner reverts to the outer tx, OR document this explicitly so callers know to inspect the trace.
 
@@ -298,7 +298,7 @@ Post-deploy state readback (mainnet):
 |---|---|---|---|
 | 11 | Add a secondary owner via timelocked governance | ❌ not smoked | Run `propose_add_owner` + wait 48h + `execute_add_owner` and confirm the new owner can sign |
 | 12 | Threshold envelope (2-of-3, mixed kinds) | ❌ not smoked | Set threshold=2 + add two more owners + sign one OE with two of them aggregated; confirm the third single signer alone can't satisfy |
-| 13 | Recovery flow (guardian initiate + owner cancel) | ⏳ **Phase A landed 2026-06-23** (V8.4) | Guardian-add proposed on wallet `0x75825349…3a0762` ([propose tx `0x1d51cac0…67038`](https://starkscan.co/tx/0x1d51cac098c52b7c6277788956488230bbf1f765abfab31a9f38d5d31e67038), op_id `0x4510f5c5…`); 48h `execute_add_owner` opens 2026-06-25T02:50Z. Phase B (`scripts/ts/mainnet-test-13-guardian-recovery.ts --phase b`) then runs: guardian-OE `initiate_recovery` (expect SUCCESS), guardian-OE with a non-recovery call (expect REVERT `'SHHH: signer not an owner'` — the V8.4 audit C-1 carve-out), owner-OE `cancel_recovery` (expect SUCCESS). `finalize_recovery` (7-day) still separate. |
+| 13 | Recovery flow (guardian initiate + owner cancel) | ✅ **smoked 2026-06-25** (V8.4) | Done — see [Test 13 detail](#test-13--guardian-recovery-carve-out-v84) below. Guardian initiated recovery; guardian's non-recovery OE reverted `'SHHH: signer not an owner'`; owner cancelled. `finalize_recovery` (7-day) still separate. |
 | 14 | Session key + spending policy | ✅ **smoked 2026-06-20** (V8.4) | Done — see [Test 14 detail](#test-14--session-key-spending-cap-v84) below. In-cap session OE succeeded; over-cap reverted on-chain with `'Spending: exceeds per-call'`. |
 | 15 | Paymaster-sponsored OE (Chipi or AVNU) | ❌ not smoked | Sign an OE with `caller='ANY_CALLER'` + relay via Chipi paymaster + confirm fee paid by paymaster, not user |
 
@@ -307,6 +307,35 @@ Post-deploy state readback (mainnet):
 2. Test 12 (threshold envelope) closes the M-2 verifier-reentrancy guard in the cross-owner aggregation path.
 3. Test 13 (recovery) is the audit C-1 fix's load-bearing demo — guardian can initiate but can't sign arbitrary OEs.
 4. Test 11 is nice-to-have for production confidence but not gating. (Test 14 ✅ done — see below.)
+
+---
+
+## Test 13 — guardian-recovery carve-out (V8.4)
+
+**Smoked 2026-06-25 on mainnet against V8.4 `ShhhAccount` `0x075dfb39…fa58a`.**
+On-chain proof of the audit C-1 carve-out: a `ROLE_GUARDIAN` signer can sign
+an OutsideExecution that calls `initiate_recovery` (with its own owner_id as
+proposer) but **cannot** sign any other OE. Driver:
+`scripts/ts/mainnet-test-13-guardian-recovery.ts` (two-phase — guardian
+install goes through the 48h `propose_add_owner` timelock).
+
+Wallet `0x75825349…3a0762` (primary STARK owner_id 0; guardian owner_id 1).
+
+| Step | Tx | Result | Block |
+|---|---|---|---|
+| Propose guardian (owner OE) — Phase A, 2026-06-23 | [`0x1d51cac0…67038`](https://starkscan.co/tx/0x1d51cac098c52b7c6277788956488230bbf1f765abfab31a9f38d5d31e67038) | ✅ SUCCEEDED | 11078782 |
+| `execute_add_owner` (install guardian, after 48h) | [`0x83b1ead0…6a880`](https://starkscan.co/tx/0x83b1ead08db8e431ca24583b8572fdba8674d17f00e9c03dd45ac04ea6a880) | ✅ SUCCEEDED | 11164122 |
+| **Guardian-OE `initiate_recovery`** (proposer = own id) | [`0x2e9529b4…b5ce33a`](https://starkscan.co/tx/0x2e9529b40b79b44803d21ccf9228926c98b3125f9becad0c4576584cb5ce33a) | ✅ **SUCCEEDED** (carve-out positive) | 11164125 |
+| **Guardian-OE, non-recovery call** (`STRK.transfer`) | [`0x6e815acb…598623e`](https://starkscan.co/tx/0x6e815acbf63d4c7c6aac0e175ac58da9dc74f813a6a4ab6ef502606a598623e) | ⛔ **REVERTED** — `'SHHH: signer not an owner'` (carve-out negative) | — |
+| Owner-OE `cancel_recovery` (clears the active pending) | [`0x9a395a39…673702`](https://starkscan.co/tx/0x9a395a3920f82f21f4fc1c7afc6c5fea0e41bae9a9a768239b9ffdb0673702) | ✅ SUCCEEDED | 11164203 |
+
+The negative case is the load-bearing one: the same guardian key that
+*could* initiate recovery is rejected with `'SHHH: signer not an owner'`
+the moment it signs anything other than the single allowed
+`initiate_recovery` call — proving a "guardian for emergency recovery"
+cannot silently act as a full owner (the V8.3 gap closed in V8.4).
+`finalize_recovery` (the 7-day permissionless completion) is a separate
+future smoke.
 
 ---
 
