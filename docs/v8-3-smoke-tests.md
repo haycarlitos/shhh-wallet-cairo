@@ -10,7 +10,7 @@
 
 **5 OE smokes + 1 V8.4 deploy smoke + governance propose all passing (trace-verified, no silent reverts).** V8.3 dispatcher proven via V8.1 carry-forward (Test 1, 2026-05-10). V8.4 deploy + state readback (Test 1a, 2026-05-15). **Four V8.4 paymaster-sponsored OEs through Chipi completed 2026-05-18 with trace-verified inner-call success**: STARK (Test 15), EIP-191 MetaMask `personal_sign` (Test 3), ED25519 Phantom/Solana (Test 2), WEBAUTHN_P256 passkey (Test 7). **Test 11 propose phase landed 2026-05-18** — 48h timelock on `propose_add_owner` now running; execute phase opens 2026-05-20T23:28Z.
 
-All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. **Session-key spending caps smoked on mainnet 2026-06-20 (Test 14)** — in-cap OE succeeded, over-cap reverted on-chain with `'Spending: exceeds per-call'`. Recovery, threshold, and the other six kinds (raw secp256k1, raw P-256, EIP-712, JWT-ES256, JWT-Apple-sub, BLS) are still snforge-only (264/264, incl. the new `account_sessions_e2e.cairo`).
+All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. **Session-key spending caps smoked on mainnet 2026-06-20 (Test 14)** — in-cap OE succeeded, over-cap reverted on-chain with `'Spending: exceeds per-call'`. **Guardian-recovery carve-out smoked 2026-06-25 (Test 13)** and **raw P-256 owner OE smoked 2026-06-25 (Test 6)**. Threshold (Test 12), `finalize_recovery` (7-day), and five signer kinds (raw secp256k1, EIP-712, JWT-ES256 ×2, BLS) remain snforge-only (264/264, incl. `account_sessions_e2e.cairo`).
 
 **Two corrections from earlier in this cycle (retracted receipts, see commit history)**:
 1. The "V8.2 verifier" hashes in `class-hashes.md` had **never actually been declared on mainnet** (despite the 2026-05-10 doc claim). All 10 finally declared 2026-05-18 (~100 STRK actual fee; BLS was already on chain).
@@ -277,7 +277,7 @@ Post-deploy state readback (mainnet):
 | 3 | `EIP191_SECP256K1` (MetaMask `personal_sign`) | ✅ smoked 2026-05-18 (V8.4, tx `0x7ccb7aa7…c4c98`) | Largest user base; the headline MetaMask integration |
 | 4 | `EIP712_SECP256K1` (MetaMask typed data) | ❌ not smoked | The structured-popup variant |
 | 5 | `SECP256K1` (raw secp256k1) | ❌ not smoked | Hardware-wallet variant |
-| 6 | `P256` (raw P-256) | ❌ not smoked | Smart cards / eIDAS |
+| 6 | `P256` (raw P-256) | ✅ **smoked 2026-06-25** (V8.4) — see [Test 6 detail](#test-6--raw-p-256-owner-oe-v84) | Smart cards / eIDAS |
 | 7 | `WEBAUTHN_P256` (Apple passkeys / Touch ID) | ✅ smoked 2026-05-18 (V8.4, tx `0x4b4ee32c…cdebf`) | Highest-UX cross-ecosystem |
 | 8 | `JWT_ES256` (Apple Sign-in single-tenant) | ❌ not smoked | Single-account Apple flow |
 | 9 | `JWT_ES256_APPLE_SUB` (Apple multi-tenant) | ❌ not smoked | Recommended for Chipi multi-user |
@@ -307,6 +307,32 @@ Post-deploy state readback (mainnet):
 2. Test 12 (threshold envelope) closes the M-2 verifier-reentrancy guard in the cross-owner aggregation path.
 3. Test 13 (recovery) is the audit C-1 fix's load-bearing demo — guardian can initiate but can't sign arbitrary OEs.
 4. Test 11 is nice-to-have for production confidence but not gating. (Test 14 ✅ done — see below.)
+
+---
+
+## Test 6 — raw P-256 owner OE (V8.4)
+
+**Smoked 2026-06-25 on mainnet against V8.4 `ShhhAccount` `0x075dfb39…fa58a`
++ `P256Verifier` `0x01b60070…0e2d8a`.** First cross-ecosystem signer kind
+beyond the Cycle-1 four — proves the dispatcher routes a raw P-256
+(smart-card / eIDAS / PIV) owner signature through `library_call` to the
+P-256 verifier class and runs the inner call. Driver:
+`scripts/ts/mainnet-test-06-p256.ts` (single phase; deploy a fresh wallet
+with a P-256 primary owner, then relay one P-256-signed OE).
+
+Wallet `0x2cf23c6f…736638` (primary owner = raw P-256 key).
+
+| Step | Tx | Result | Block |
+|---|---|---|---|
+| Deploy P-256 wallet | [`0x6b5f6c14…768b3d`](https://starkscan.co/tx/0x6b5f6c14ea205ddb214eb42679fe9ace78c71993f1bf86609154d62a768b3d) | ✅ SUCCEEDED | 11165396 |
+| **P-256-signed OE** (`execute_from_outside_v2`, no-op `STRK.transfer(self, 0)`) | [`0x60ef9066…2db2a2`](https://starkscan.co/tx/0x60ef90664833bf87a6efbb46f1f9c6402141f7880c6c351765fde81de2db2a2) | ✅ **SUCCEEDED** + inner call ran | 11165403 |
+
+Envelope `[V2_SNIP12, owner_id=0, 'P256', r_lo, r_hi, s_lo, s_hi, y_parity]`;
+the verifier checks the raw-ECDSA signature over the 32-byte big-endian
+SNIP-12 hash (`prehash:false`), encoding identical to
+`scripts/ts/gen-p256-fixture.mjs`. Total fee ~1.60 STRK (P-256 verify is
+~1.27 STRK of it). Remaining snforge-only kinds: EIP-712, raw secp256k1,
+JWT-ES256 (×2), BLS12-381.
 
 ---
 
