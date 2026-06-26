@@ -10,7 +10,7 @@
 
 **5 OE smokes + 1 V8.4 deploy smoke + governance propose all passing (trace-verified, no silent reverts).** V8.3 dispatcher proven via V8.1 carry-forward (Test 1, 2026-05-10). V8.4 deploy + state readback (Test 1a, 2026-05-15). **Four V8.4 paymaster-sponsored OEs through Chipi completed 2026-05-18 with trace-verified inner-call success**: STARK (Test 15), EIP-191 MetaMask `personal_sign` (Test 3), ED25519 Phantom/Solana (Test 2), WEBAUTHN_P256 passkey (Test 7). **Test 11 propose phase landed 2026-05-18** — 48h timelock on `propose_add_owner` now running; execute phase opens 2026-05-20T23:28Z.
 
-All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. **Session-key spending caps smoked on mainnet 2026-06-20 (Test 14)** — in-cap OE succeeded, over-cap reverted on-chain with `'Spending: exceeds per-call'`. **Guardian-recovery carve-out smoked 2026-06-25 (Test 13)** and **raw P-256 (Test 6) + raw secp256k1 (Test 5) owner OEs smoked 2026-06-25**. Threshold (Test 12), `finalize_recovery` (7-day), and four signer kinds (EIP-712, JWT-ES256 ×2, BLS) remain snforge-only (264/264, incl. `account_sessions_e2e.cairo`).
+All four Chipi Cycle-1 kinds are now production-validated. Governance propose-phase proven; execute-phase pending the 48h timelock. **Session-key spending caps smoked on mainnet 2026-06-20 (Test 14)** — in-cap OE succeeded, over-cap reverted on-chain with `'Spending: exceeds per-call'`. **Guardian-recovery carve-out smoked 2026-06-25 (Test 13)** **raw P-256 (Test 6) + raw secp256k1 (Test 5) owner OEs smoked 2026-06-25**, and **EIP-712 MetaMask typed-data (Test 4) smoked 2026-06-26**. Threshold (Test 12), `finalize_recovery` (7-day), and three signer kinds (JWT-ES256 ×2, BLS) remain snforge-only (264/264, incl. `account_sessions_e2e.cairo`).
 
 **Two corrections from earlier in this cycle (retracted receipts, see commit history)**:
 1. The "V8.2 verifier" hashes in `class-hashes.md` had **never actually been declared on mainnet** (despite the 2026-05-10 doc claim). All 10 finally declared 2026-05-18 (~100 STRK actual fee; BLS was already on chain).
@@ -275,7 +275,7 @@ Post-deploy state readback (mainnet):
 |---|---|---|---|
 | 2 | `ED25519` (Phantom / Solana) | ✅ smoked 2026-05-18 (V8.4, tx `0x1c1b7828…0cbeccd`) | First cross-ecosystem demo |
 | 3 | `EIP191_SECP256K1` (MetaMask `personal_sign`) | ✅ smoked 2026-05-18 (V8.4, tx `0x7ccb7aa7…c4c98`) | Largest user base; the headline MetaMask integration |
-| 4 | `EIP712_SECP256K1` (MetaMask typed data) | ❌ not smoked | The structured-popup variant |
+| 4 | `EIP712_SECP256K1` (MetaMask typed data) | ✅ **smoked 2026-06-26** (V8.4) — see [Test 4 detail](#test-4--eip-712-typed-data-owner-oe-v84) | The structured-popup variant |
 | 5 | `SECP256K1` (raw secp256k1) | ✅ **smoked 2026-06-25** (V8.4) — see [Test 5 detail](#test-5--raw-secp256k1-owner-oe-v84) | Hardware-wallet variant |
 | 6 | `P256` (raw P-256) | ✅ **smoked 2026-06-25** (V8.4) — see [Test 6 detail](#test-6--raw-p-256-owner-oe-v84) | Smart cards / eIDAS |
 | 7 | `WEBAUTHN_P256` (Apple passkeys / Touch ID) | ✅ smoked 2026-05-18 (V8.4, tx `0x4b4ee32c…cdebf`) | Highest-UX cross-ecosystem |
@@ -307,6 +307,35 @@ Post-deploy state readback (mainnet):
 2. Test 12 (threshold envelope) closes the M-2 verifier-reentrancy guard in the cross-owner aggregation path.
 3. Test 13 (recovery) is the audit C-1 fix's load-bearing demo — guardian can initiate but can't sign arbitrary OEs.
 4. Test 11 is nice-to-have for production confidence but not gating. (Test 14 ✅ done — see below.)
+
+---
+
+## Test 4 — EIP-712 typed-data owner OE (V8.4)
+
+**Smoked 2026-06-26 on mainnet against V8.4 `ShhhAccount` `0x075dfb39…fa58a`
++ `EIP712Secp256k1Verifier` `0x072a3f77…1c6474`.** This is MetaMask's
+`eth_signTypedData_v4` structured-popup path — the verifier recomputes the
+full EIP-712 final hash on-chain from runtime context and ecrecovers.
+Driver: `scripts/ts/mainnet-test-04-eip712.ts`.
+
+Wallet `0x59be3e5b…08ea557` (primary owner = secp256k1 key, EIP-712 envelope).
+
+| Step | Tx | Result | Block |
+|---|---|---|---|
+| Deploy EIP-712 wallet | [`0x27b5a713…43e23f0`](https://starkscan.co/tx/0x27b5a71321b60cd2a8e8a9cbac44b252fd6105cae4b753ef72dfef4c43e23f0) | ✅ SUCCEEDED | 11195539 |
+| **EIP-712-signed OE** (`execute_from_outside_v2`, no-op `STRK.transfer(self, 0)`) | [`0x212e7bda…76e556e6`](https://starkscan.co/tx/0x212e7bda67f6fa4d3921ca3350f9a6d08fad0cc3d53146308f9dcbe76e556e6) | ✅ **SUCCEEDED** + inner call ran | 11195545 |
+
+Domain `EIP712Domain(string name,string version,uint256 chainId,bytes32 salt)`
+= `{name:'Shhh', version:'1', chainId:'SN_MAIN' (0x534e5f4d41494e), salt:wallet
+address}`; struct `MessageHash(bytes32 hash)` with `hash` = the SNIP-12 OE
+hash; envelope `[V2_SNIP12, owner_id=0, 'EIP712_SECP256K1', r_lo, r_hi, s_lo,
+s_hi, y_parity]`. Signature via ethers `signTypedData` (the exact MetaMask
+recipe), encoding identical to `scripts/ts/gen-eip712-fixture.mjs` — the only
+difference from that snforge fixture is `chainId`/`salt` set to the live
+mainnet runtime values (the verifier reads `tx.chain_id` +
+`get_contract_address()`), so each signature is bound to one account on one
+chain. Total fee ~1.07 STRK. Passed first try. Remaining snforge-only kinds:
+JWT-ES256 (×2), BLS12-381.
 
 ---
 
