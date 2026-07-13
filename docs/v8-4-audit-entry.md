@@ -138,6 +138,8 @@ Real (trace-verified) Cycle-1 receipts via Chipi paymaster on V8.4:
 
 Full receipt blocks + reproduction scripts in [`docs/v8-3-smoke-tests.md`](./v8-3-smoke-tests.md). Smokes are *empirical evidence*, not a substitute for code review — every kind dispatches into a separate verifier you should still walk through.
 
+**Helper-side correctness discipline**: the receipt corpus is only meaningful if the helpers that captured the receipts actually check what they claim. Four distinct helper-class bugs were discovered and fixed across TS + Python SDKs during this push; the unified write-up is [`docs/v8-4-helper-correctness-lessons.md`](./v8-4-helper-correctness-lessons.md). Read that doc to understand why the 13 receipts above are independently re-verifiable rather than paste-artifacts. Grep targets for any future SDK port are consolidated at the bottom of that page.
+
 ---
 
 ## 7. Build + repro
