@@ -1,0 +1,325 @@
+#!/usr/bin/env node
+/**
+ * WebAuthn P-256 full-envelope fixture generator.
+ *
+ * Builds a realistic WebAuthn assertion where:
+ *   - authenticatorData = rpIdHash(32 B) || flags(1 B, UP=0x01) || signCount(4 B)
+ *   - clientDataJSON    = `{"type":"webauthn.get","challenge":"<b64url>","origin":"https://cifra.mx","crossOrigin":false}`
+ *   - challenge = base64url(messageHash as 32 BE bytes, no padding)
+ *
+ * The authenticator signs `sha256(authenticatorData || sha256(clientDataJSON))`
+ * under the raw NIST P-256 curve. The envelope layout emitted here
+ * matches `WebAuthnP256Verifier.verify`'s Serde reader:
+ *
+ *   [ ByteArray(auth_data), ByteArray(client_data), challenge_offset_u32,
+ *     r_low, r_high, s_low, s_high, y_parity ]
+ */
+
+import { p256 } from '@noble/curves/nist.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Same MESSAGE_HASH as the other signer fixtures — SNIP-12 canonical.
+const MESSAGE_HASH = 0x5bcd634ce46c7234bd7a4b0959c3c5edeed7f569dcfb7b33e23d7e2197a2a2fn;
+
+const PRIV = new Uint8Array(32);
+for (let i = 0; i < 32; i++) PRIV[i] = i + 1;
+
+const hashBytes = new Uint8Array(32);
+{
+  let h = MESSAGE_HASH;
+  for (let i = 31; i >= 0; i--) {
+    hashBytes[i] = Number(h & 0xffn);
+    h >>= 8n;
+  }
+}
+
+// ---------------- base64url(32B, no padding) ----------------
+function b64urlEncode(bytes) {
+  return Buffer.from(bytes).toString('base64url');
+}
+
+const challengeStr = b64urlEncode(hashBytes);
+if (challengeStr.length !== 43) throw new Error(`expected 43 chars, got ${challengeStr.length}`);
+
+// ---------------- clientDataJSON ----------------
+const clientDataObj = {
+  type: 'webauthn.get',
+  challenge: challengeStr,
+  origin: 'https://cifra.mx',
+  crossOrigin: false,
+};
+const clientDataStr = JSON.stringify(clientDataObj);
+const clientData = new TextEncoder().encode(clientDataStr);
+const challengeOffset = clientDataStr.indexOf(`"challenge":"${challengeStr}"`);
+if (challengeOffset < 0) throw new Error('challenge substring not found');
+const challengeStart = challengeOffset + '"challenge":"'.length;
+
+// ---------------- authenticatorData ----------------
+// rpIdHash = sha256("cifra.mx")
+const rpIdHash = sha256(new TextEncoder().encode('cifra.mx'));
+const flags = 0x05; // UP (0x01) + UV (0x04)
+const signCountBE = new Uint8Array([0, 0, 0, 42]);
+const authData = new Uint8Array(32 + 1 + 4);
+authData.set(rpIdHash, 0);
+authData[32] = flags;
+authData.set(signCountBE, 33);
+
+// ---------------- P-256 signing ----------------
+// Concatenate authData || sha256(clientDataJSON), sign sha256 of that
+// directly (prehash:false) to match the Cairo verifier flow.
+const hClient = sha256(clientData);
+const signingBase = new Uint8Array(authData.length + hClient.length);
+signingBase.set(authData, 0);
+signingBase.set(hClient, authData.length);
+const outerHash = sha256(signingBase);
+
+const sigBytes = p256.sign(outerHash, PRIV, { prehash: false });
+if (sigBytes.length !== 64) throw new Error('bad sig length');
+const rBytes = sigBytes.slice(0, 32);
+const sBytes = sigBytes.slice(32, 64);
+
+const pubBytes = p256.getPublicKey(PRIV, false);
+if (pubBytes[0] !== 0x04 || pubBytes.length !== 65) throw new Error('bad pubkey');
+const xBytes = pubBytes.slice(1, 33);
+const yBytes = pubBytes.slice(33, 65);
+
+function bytesBeToU256(b) {
+  let x = 0n;
+  for (let i = 0; i < b.length; i++) x = (x << 8n) | BigInt(b[i]);
+  const low = x & ((1n << 128n) - 1n);
+  const high = x >> 128n;
+  return { low, high };
+}
+
+const pub = { x: bytesBeToU256(xBytes), y: bytesBeToU256(yBytes) };
+const r = bytesBeToU256(rBytes);
+const s = bytesBeToU256(sBytes);
+
+const felt = (x) => '0x' + x.toString(16);
+
+// ---------------- Serialize ByteArray for Cairo Serde ----------------
+// ByteArray serde layout:
+//   num_full_words: u32   (each "full word" packs 31 bytes as one felt252)
+//   full_words:     felt252 * num_full_words
+//   pending_word:   felt252
+//   pending_word_len: u32
+function byteArrayToFelts(bytes) {
+  const fullWords = [];
+  const totalFull = Math.floor(bytes.length / 31);
+  for (let i = 0; i < totalFull; i++) {
+    const start = i * 31;
+    const chunk = bytes.slice(start, start + 31);
+    let v = 0n;
+    for (let j = 0; j < 31; j++) v = (v << 8n) | BigInt(chunk[j]);
+    fullWords.push(v);
+  }
+  const rem = bytes.length - totalFull * 31;
+  let pending = 0n;
+  for (let j = 0; j < rem; j++) {
+    pending = (pending << 8n) | BigInt(bytes[totalFull * 31 + j]);
+  }
+  return { fullWords, pendingWord: pending, pendingLen: rem, numFull: totalFull };
+}
+
+const authSerde = byteArrayToFelts(authData);
+const cdSerde = byteArrayToFelts(clientData);
+
+// ---------------- Emit Cairo fixture ----------------
+const cairoArr = (xs) => xs.map((x) => '        ' + felt(x) + ',').join('\n');
+
+const cairo = `//! AUTO-GENERATED by scripts/ts/gen-webauthn-fixture.mjs.
+//! Do not edit by hand.
+//!
+//! Private key:       ${Buffer.from(PRIV).toString('hex')}
+//! SNIP-12 hash:      ${felt(MESSAGE_HASH)}
+//! Challenge (b64url): ${challengeStr}
+//! clientDataJSON:    ${clientDataStr}
+//! challenge_offset:  ${challengeStart}   (byte index of first base64 char)
+//! authData len:      ${authData.length}  (flags=0x${flags.toString(16).padStart(2, '0')})
+//! Pubkey X:          ${Buffer.from(xBytes).toString('hex')}
+//! Pubkey Y:          ${Buffer.from(yBytes).toString('hex')}
+//! r:                 ${Buffer.from(rBytes).toString('hex')}
+//! s:                 ${Buffer.from(sBytes).toString('hex')}
+
+pub fn webauthn_message_hash() -> felt252 {
+    ${felt(MESSAGE_HASH)}
+}
+
+pub fn webauthn_pubkey() -> Array<felt252> {
+    array![
+        ${felt(pub.x.low)},
+        ${felt(pub.x.high)},
+        ${felt(pub.y.low)},
+        ${felt(pub.y.high)},
+    ]
+}
+
+pub fn webauthn_signature_envelope() -> Array<felt252> {
+    // ByteArray(authenticator_data) + ByteArray(client_data_json) +
+    // challenge_offset_u32 + r_low + r_high + s_low + s_high + y_parity
+    array![
+        // --- authenticator_data ---
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        // --- client_data_json ---
+        ${felt(BigInt(cdSerde.numFull))},
+${cairoArr(cdSerde.fullWords)}
+        ${felt(cdSerde.pendingWord)},
+        ${felt(BigInt(cdSerde.pendingLen))},
+        // --- challenge_offset ---
+        ${felt(BigInt(challengeStart))},
+        // --- r, s, y_parity ---
+        ${felt(r.low)},
+        ${felt(r.high)},
+        ${felt(s.low)},
+        ${felt(s.high)},
+        0,
+    ]
+}
+
+/// Same envelope with the challenge offset shifted by one byte — the
+/// substring at that offset no longer base64url-decodes to the
+/// message_hash, so the verifier MUST return false.
+pub fn webauthn_signature_envelope_wrong_offset() -> Array<felt252> {
+    array![
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        ${felt(BigInt(cdSerde.numFull))},
+${cairoArr(cdSerde.fullWords)}
+        ${felt(cdSerde.pendingWord)},
+        ${felt(BigInt(cdSerde.pendingLen))},
+        ${felt(BigInt(challengeStart + 1))},
+        ${felt(r.low)},
+        ${felt(r.high)},
+        ${felt(s.low)},
+        ${felt(s.high)},
+        0,
+    ]
+}
+
+/// Envelope with UP flag cleared — authenticator_data[32] becomes
+/// 0x04 (UV only). The verifier MUST reject per WebAuthn §7.2 step 17.
+pub fn webauthn_signature_envelope_no_up() -> Array<felt252> {
+    // Rebuild the first full-word of authData with flags byte cleared.
+    // Easier and cheaper to just zero the flags byte by rebuilding the
+    // first full word — the fixture generator emits it pre-patched.
+    ${(() => {
+      // Patch authData: set byte 32 to 0x04 (UV only, no UP).
+      const bad = new Uint8Array(authData);
+      bad[32] = 0x04;
+      const badSerde = byteArrayToFelts(bad);
+      return `array![
+        ${felt(BigInt(badSerde.numFull))},
+${cairoArr(badSerde.fullWords)}
+        ${felt(badSerde.pendingWord)},
+        ${felt(BigInt(badSerde.pendingLen))},
+        ${felt(BigInt(cdSerde.numFull))},
+${cairoArr(cdSerde.fullWords)}
+        ${felt(cdSerde.pendingWord)},
+        ${felt(BigInt(cdSerde.pendingLen))},
+        ${felt(BigInt(challengeStart))},
+        ${felt(r.low)},
+        ${felt(r.high)},
+        ${felt(s.low)},
+        ${felt(s.high)},
+        0,
+    ]`;
+    })()}
+}
+
+/// H-1 attack fixture: clientDataJSON has type="webauthn.create" instead
+/// of "webauthn.get". The challenge bytes still resolve correctly — an
+/// insufficient verifier (no type check) would accept this. Re-signed
+/// under the same private key so the ECDSA portion verifies; only the
+/// prefix check MUST reject.
+pub fn webauthn_signature_envelope_wrong_type() -> Array<felt252> {
+${await (async () => {
+  const badClientDataObj = { ...clientDataObj, type: 'webauthn.create' };
+  const badClientDataStr = JSON.stringify(badClientDataObj);
+  const badClientData = new TextEncoder().encode(badClientDataStr);
+  const badOffset =
+    badClientDataStr.indexOf(`"challenge":"${challengeStr}"`) + '"challenge":"'.length;
+  const badHInner = sha256(badClientData);
+  const badBase = new Uint8Array(authData.length + badHInner.length);
+  badBase.set(authData, 0);
+  badBase.set(badHInner, authData.length);
+  const badOuterHash = sha256(badBase);
+  const badSig = p256.sign(badOuterHash, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badCdSerde = byteArrayToFelts(badClientData);
+  return `    array![
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        ${felt(BigInt(badCdSerde.numFull))},
+${cairoArr(badCdSerde.fullWords)}
+        ${felt(badCdSerde.pendingWord)},
+        ${felt(BigInt(badCdSerde.pendingLen))},
+        ${felt(BigInt(badOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
+
+/// H-1 edge case: clientDataJSON missing the type field entirely. The
+/// challenge is still in a legal JSON key position, but the required
+/// prefix check fails before the verifier reaches ECDSA.
+pub fn webauthn_signature_envelope_missing_type() -> Array<felt252> {
+${await (async () => {
+  // Build a JSON that starts with `{"challenge":...}` — type omitted.
+  const badClientDataStr = `{"challenge":"${challengeStr}","origin":"https://cifra.mx"}`;
+  const badClientData = new TextEncoder().encode(badClientDataStr);
+  const badOffset =
+    badClientDataStr.indexOf(`"challenge":"${challengeStr}"`) + '"challenge":"'.length;
+  const badHInner = sha256(badClientData);
+  const badBase = new Uint8Array(authData.length + badHInner.length);
+  badBase.set(authData, 0);
+  badBase.set(badHInner, authData.length);
+  const badOuterHash = sha256(badBase);
+  const badSig = p256.sign(badOuterHash, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badCdSerde = byteArrayToFelts(badClientData);
+  return `    array![
+        ${felt(BigInt(authSerde.numFull))},
+${cairoArr(authSerde.fullWords)}
+        ${felt(authSerde.pendingWord)},
+        ${felt(BigInt(authSerde.pendingLen))},
+        ${felt(BigInt(badCdSerde.numFull))},
+${cairoArr(badCdSerde.fullWords)}
+        ${felt(badCdSerde.pendingWord)},
+        ${felt(BigInt(badCdSerde.pendingLen))},
+        ${felt(BigInt(badOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
+`;
+
+const here = dirname(fileURLToPath(import.meta.url));
+const out = resolve(here, '../../tests/signer_webauthn_fixture.cairo');
+writeFileSync(out, cairo);
+
+console.log('Wrote', out);
+console.log('challenge:', challengeStr);
+console.log('offset   :', challengeStart);
+console.log('authData :', Buffer.from(authData).toString('hex'));
+console.log('r        :', Buffer.from(rBytes).toString('hex'));
+console.log('s        :', Buffer.from(sBytes).toString('hex'));

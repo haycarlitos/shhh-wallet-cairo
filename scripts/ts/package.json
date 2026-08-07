@@ -1,0 +1,25 @@
+{
+  "name": "shhh-wallet-cairo-scripts",
+  "private": true,
+  "type": "module",
+  "version": "0.8.0-pre",
+  "description": "TypeScript reference tooling for the Shhh Wallet V8 — SNIP-12 hashing, fixture regeneration, migration SDK.",
+  "scripts": {
+    "snip12-hash": "tsx snip12-hash.ts",
+    "snip12-test": "node --experimental-vm-modules --test snip12-hash.test.ts",
+    "check:interface-ids": "node check-interface-ids.mjs",
+    "test14": "tsx mainnet-test-14-spending-cap.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "ethers": "^6.16.0",
+    "garaga": "^1.0.1",
+    "starknet": "^9.4.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^6.0.3"
+  }
+}

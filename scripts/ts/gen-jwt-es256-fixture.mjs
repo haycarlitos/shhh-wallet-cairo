@@ -1,0 +1,278 @@
+#!/usr/bin/env node
+/**
+ * JWT ES256 fixture for V8 JwtES256AppleVerifier.
+ *
+ * Builds a Sign-In-with-Apple-shaped JWT from scratch using a
+ * deterministic test P-256 key (we don't need a real Apple cert; the
+ * verifier only checks the signature against whatever pubkey is
+ * stored in the owner record).
+ *
+ * The JWT carries:
+ *   header  = {"alg":"ES256","kid":"test-key-1"}
+ *   payload = {
+ *     "iss": "https://appleid.apple.com",
+ *     "aud": "io.cifra.app",
+ *     "exp": <future>,
+ *     "iat": <now>,
+ *     "sub": "001234.abcdef.5678",
+ *     "nonce": "<base64url of MESSAGE_HASH>",
+ *     "email": "user@privaterelay.appleid.com"
+ *   }
+ *
+ * Signed value (RFC 7515): the literal ASCII bytes
+ *   header_b64url || "." || payload_b64url
+ * fed through sha256, then ECDSA-P256-signed.
+ *
+ * Envelope shape the Cairo verifier consumes:
+ *   header_b64:        ByteArray
+ *   payload_decoded:   ByteArray   (the raw JSON, NOT base64url)
+ *   nonce_offset:      u32         (byte index in payload_decoded)
+ *   iss_offset:        u32         (byte index in payload_decoded)
+ *   r, s:              u256
+ *   y_parity:          felt252
+ */
+
+import { p256 } from '@noble/curves/nist.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const MESSAGE_HASH = 0x5bcd634ce46c7234bd7a4b0959c3c5edeed7f569dcfb7b33e23d7e2197a2a2fn;
+
+const PRIV = new Uint8Array(32);
+for (let i = 0; i < 32; i++) PRIV[i] = i + 1;
+
+// 32 BE bytes of the SNIP-12 hash.
+const hashBytes = new Uint8Array(32);
+{
+  let h = MESSAGE_HASH;
+  for (let i = 31; i >= 0; i--) {
+    hashBytes[i] = Number(h & 0xffn);
+    h >>= 8n;
+  }
+}
+const challengeStr = Buffer.from(hashBytes).toString('base64url');
+if (challengeStr.length !== 43) throw new Error(`expected 43 chars, got ${challengeStr.length}`);
+
+// Build JWT pieces.
+const headerObj = { alg: 'ES256', kid: 'test-key-1' };
+const payloadObj = {
+  iss: 'https://appleid.apple.com',
+  aud: 'io.cifra.app',
+  exp: 9999999999,
+  iat: 1714521600,
+  sub: '001234.abcdef.5678',
+  nonce: challengeStr,
+  email: 'user@privaterelay.appleid.com',
+};
+
+const headerJsonBytes = new TextEncoder().encode(JSON.stringify(headerObj));
+const payloadJsonBytes = new TextEncoder().encode(JSON.stringify(payloadObj));
+const headerB64 = Buffer.from(headerJsonBytes).toString('base64url');
+const payloadB64 = Buffer.from(payloadJsonBytes).toString('base64url');
+
+// Find offsets in the DECODED payload bytes (the verifier scans the
+// decoded form because that's where the literal nonce + iss strings
+// appear).
+const payloadDecodedStr = new TextDecoder().decode(payloadJsonBytes);
+const nonceOffset = payloadDecodedStr.indexOf(challengeStr);
+if (nonceOffset < 0) throw new Error('challenge not found in decoded payload');
+const issOffset = payloadDecodedStr.indexOf('https://appleid.apple.com');
+if (issOffset < 0) throw new Error('iss string not found in decoded payload');
+
+// Sign the canonical JWT signing input.
+const signingInput = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
+const digest = sha256(signingInput);
+
+// noble-curves v2: pass `prehash: false` so it signs the digest
+// directly rather than re-hashing it.
+const sigBytes = p256.sign(digest, PRIV, { prehash: false });
+if (sigBytes.length !== 64) throw new Error('expected 64-byte sig');
+const rBytes = sigBytes.slice(0, 32);
+const sBytes = sigBytes.slice(32, 64);
+
+const pubBytes = p256.getPublicKey(PRIV, false);
+if (pubBytes[0] !== 0x04 || pubBytes.length !== 65) throw new Error('bad pubkey');
+const xBytes = pubBytes.slice(1, 33);
+const yBytes = pubBytes.slice(33, 65);
+
+function bytesBeToU256(b) {
+  let x = 0n;
+  for (let i = 0; i < b.length; i++) x = (x << 8n) | BigInt(b[i]);
+  return { low: x & ((1n << 128n) - 1n), high: x >> 128n };
+}
+
+function byteArrayToFelts(bytes) {
+  // Cairo ByteArray Serde: [num_full_words, ...full_words, pending_word, pending_word_len]
+  const out = [];
+  const numFull = Math.floor(bytes.length / 31);
+  out.push(BigInt(numFull));
+  for (let i = 0; i < numFull; i++) {
+    let v = 0n;
+    for (let j = 0; j < 31; j++) v = (v << 8n) | BigInt(bytes[i * 31 + j]);
+    out.push(v);
+  }
+  const rem = bytes.length - numFull * 31;
+  let pending = 0n;
+  for (let j = 0; j < rem; j++) pending = (pending << 8n) | BigInt(bytes[numFull * 31 + j]);
+  out.push(pending);
+  out.push(BigInt(rem));
+  return out;
+}
+
+const pub = { x: bytesBeToU256(xBytes), y: bytesBeToU256(yBytes) };
+const r = bytesBeToU256(rBytes);
+const s = bytesBeToU256(sBytes);
+const felt = (x) => '0x' + x.toString(16);
+
+// Header b64 as ByteArray felts.
+const headerB64Bytes = new TextEncoder().encode(headerB64);
+const headerFelts = byteArrayToFelts(headerB64Bytes);
+// Payload decoded JSON as ByteArray felts.
+const payloadFelts = byteArrayToFelts(payloadJsonBytes);
+
+const cairoArr = (xs) => xs.map((x) => '        ' + felt(x) + ',').join('\n');
+
+const cairo = `//! AUTO-GENERATED by scripts/ts/gen-jwt-es256-fixture.mjs.
+//! Do not edit by hand. Re-run if the JWT shape, fixture inputs,
+//! or envelope layout change.
+//!
+//! Private key: ${Buffer.from(PRIV).toString('hex')}
+//! Signed hash: ${felt(MESSAGE_HASH)}
+//! Header b64 : ${headerB64}
+//! Payload    : ${payloadDecodedStr}
+//! Payload b64: ${payloadB64}
+//! nonce_offset (in decoded JSON): ${nonceOffset}
+//! iss_offset   (in decoded JSON): ${issOffset}
+//! r          : ${Buffer.from(rBytes).toString('hex')}
+//! s          : ${Buffer.from(sBytes).toString('hex')}
+
+pub fn jwt_message_hash() -> felt252 {
+    ${felt(MESSAGE_HASH)}
+}
+
+pub fn jwt_pubkey() -> Array<felt252> {
+    array![
+        ${felt(pub.x.low)},
+        ${felt(pub.x.high)},
+        ${felt(pub.y.low)},
+        ${felt(pub.y.high)},
+    ]
+}
+
+pub fn jwt_signature_envelope() -> Array<felt252> {
+    array![
+        // --- header_b64 (ByteArray) ---
+        ${felt(headerFelts[0])},
+${headerFelts.length > 3 ? cairoArr(headerFelts.slice(1, -2)) + '\n' : ''}        ${felt(headerFelts[headerFelts.length - 2])},
+        ${felt(headerFelts[headerFelts.length - 1])},
+        // --- payload_decoded (ByteArray) ---
+        ${felt(payloadFelts[0])},
+${payloadFelts.length > 3 ? cairoArr(payloadFelts.slice(1, -2)) + '\n' : ''}        ${felt(payloadFelts[payloadFelts.length - 2])},
+        ${felt(payloadFelts[payloadFelts.length - 1])},
+        // --- nonce_offset, iss_offset ---
+        ${felt(BigInt(nonceOffset))},
+        ${felt(BigInt(issOffset))},
+        // --- r, s, y_parity ---
+        ${felt(r.low)},
+        ${felt(r.high)},
+        ${felt(s.low)},
+        ${felt(s.high)},
+        0,
+    ]
+}
+
+/// Tampered fixture: payload claims a different issuer. Signature is
+/// re-signed for consistency, so ECDSA verifies — the verifier MUST
+/// reject because the iss bytes don't match the hardcoded constant.
+pub fn jwt_signature_envelope_wrong_issuer() -> Array<felt252> {
+${(() => {
+  const badPayloadObj = { ...payloadObj, iss: 'https://example.com/oauth' };
+  const badJsonBytes = new TextEncoder().encode(JSON.stringify(badPayloadObj));
+  const badPayloadB64 = Buffer.from(badJsonBytes).toString('base64url');
+  const badPayloadDecodedStr = new TextDecoder().decode(badJsonBytes);
+  const badNonceOffset = badPayloadDecodedStr.indexOf(challengeStr);
+  // Find a 25-char window in the bad payload that we'll send as
+  // iss_offset — pick the same JSON key path the verifier would
+  // expect (after \"iss\":\"). It still won't match the hardcoded
+  // expected string.
+  const badIssOffset = badPayloadDecodedStr.indexOf('https://example.com/oauth');
+  const badSigningInput = new TextEncoder().encode(`${headerB64}.${badPayloadB64}`);
+  const badDigest = sha256(badSigningInput);
+  const badSig = p256.sign(badDigest, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badPayloadFelts = byteArrayToFelts(badJsonBytes);
+  const badHeaderFelts = byteArrayToFelts(new TextEncoder().encode(headerB64));
+  return `    array![
+        ${felt(badHeaderFelts[0])},
+${badHeaderFelts.length > 3 ? cairoArr(badHeaderFelts.slice(1, -2)) + '\n' : ''}        ${felt(badHeaderFelts[badHeaderFelts.length - 2])},
+        ${felt(badHeaderFelts[badHeaderFelts.length - 1])},
+        ${felt(badPayloadFelts[0])},
+${badPayloadFelts.length > 3 ? cairoArr(badPayloadFelts.slice(1, -2)) + '\n' : ''}        ${felt(badPayloadFelts[badPayloadFelts.length - 2])},
+        ${felt(badPayloadFelts[badPayloadFelts.length - 1])},
+        ${felt(BigInt(badNonceOffset))},
+        ${felt(BigInt(badIssOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
+
+/// Tampered fixture: payload claims a different nonce (Apple-style
+/// JWT but the challenge field is for a different hash). ECDSA verifies
+/// because we re-signed; verifier MUST reject because the nonce bytes
+/// don't match base64url(message_hash).
+pub fn jwt_signature_envelope_wrong_nonce() -> Array<felt252> {
+${(() => {
+  // Generate a different challenge by signing for a different hash.
+  const otherChallenge = Buffer.from(new Uint8Array(32).fill(0xAA)).toString('base64url');
+  const badPayloadObj = { ...payloadObj, nonce: otherChallenge };
+  const badJsonBytes = new TextEncoder().encode(JSON.stringify(badPayloadObj));
+  const badPayloadB64 = Buffer.from(badJsonBytes).toString('base64url');
+  const badPayloadDecodedStr = new TextDecoder().decode(badJsonBytes);
+  const badNonceOffset = badPayloadDecodedStr.indexOf(otherChallenge);
+  const badIssOffset = badPayloadDecodedStr.indexOf('https://appleid.apple.com');
+  const badSigningInput = new TextEncoder().encode(`${headerB64}.${badPayloadB64}`);
+  const badDigest = sha256(badSigningInput);
+  const badSig = p256.sign(badDigest, PRIV, { prehash: false });
+  const badR = bytesBeToU256(badSig.slice(0, 32));
+  const badS = bytesBeToU256(badSig.slice(32, 64));
+  const badPayloadFelts = byteArrayToFelts(badJsonBytes);
+  const badHeaderFelts = byteArrayToFelts(new TextEncoder().encode(headerB64));
+  return `    array![
+        ${felt(badHeaderFelts[0])},
+${badHeaderFelts.length > 3 ? cairoArr(badHeaderFelts.slice(1, -2)) + '\n' : ''}        ${felt(badHeaderFelts[badHeaderFelts.length - 2])},
+        ${felt(badHeaderFelts[badHeaderFelts.length - 1])},
+        ${felt(badPayloadFelts[0])},
+${badPayloadFelts.length > 3 ? cairoArr(badPayloadFelts.slice(1, -2)) + '\n' : ''}        ${felt(badPayloadFelts[badPayloadFelts.length - 2])},
+        ${felt(badPayloadFelts[badPayloadFelts.length - 1])},
+        ${felt(BigInt(badNonceOffset))},
+        ${felt(BigInt(badIssOffset))},
+        ${felt(badR.low)},
+        ${felt(badR.high)},
+        ${felt(badS.low)},
+        ${felt(badS.high)},
+        0,
+    ]`;
+})()}
+}
+`;
+
+const here = dirname(fileURLToPath(import.meta.url));
+const out = resolve(here, '../../tests/signer_jwt_es256_fixture.cairo');
+writeFileSync(out, cairo);
+
+console.log('Wrote', out);
+console.log('challenge       =', challengeStr);
+console.log('nonce_offset    =', nonceOffset);
+console.log('iss_offset      =', issOffset);
+console.log('payload bytes   =', payloadJsonBytes.length);
+console.log('header b64 len  =', headerB64.length);
+console.log('payload b64 len =', payloadB64.length);
+console.log('r               =', '0x' + Buffer.from(rBytes).toString('hex'));
+console.log('s               =', '0x' + Buffer.from(sBytes).toString('hex'));
