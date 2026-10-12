@@ -16,7 +16,10 @@ What's live on Starknet mainnet right now (2026-05-05), via class
 hashes in [`class-hashes.md`](./class-hashes.md):
 
 - `ShhhAccount` — the account class
-- `StarkVerifier` — Ready, Braavos, Ledger Starknet app, native
+- `StarkVerifier` — raw-hash STARK signers: Ledger Starknet app,
+  relayers, server keys. Browser wallets (Bramble, Braavos, Ready) use
+  STARK keys but never sign a raw hash, so they need
+  `StarkSnip12Verifier` (pending declare, below).
 - `Ed25519Verifier` — Phantom, Solflare, every Solana wallet
 - `Secp256k1Verifier` — raw secp256k1 (hardware wallets exposing
   low-level signing)
@@ -38,6 +41,13 @@ hashes in [`class-hashes.md`](./class-hashes.md):
   Windows Hello, YubiKey FIDO2
 
 In the same `v8-robust` branch but pending mainnet declare:
+
+- `StarkSnip12Verifier` — Bramble, Braavos, Ready/Argent and
+  OpenZeppelin accounts through `wallet_signTypedData`. The wallet
+  shows a SNIP-12 `Approval { Wallet, Hash }` and signs it with its
+  STARK key; the verifier rebuilds that typed data (bound to the
+  ShhhAccount and the chain) and checks the ECDSA. Pure, no external
+  calls, so counterfactual accounts work too.
 
 - `Bls12_381MinSigVerifier` — BLS12-381 min-sig-size (drand
   ciphersuite). 48-byte G1 signatures, 96-byte G2 pubkeys.

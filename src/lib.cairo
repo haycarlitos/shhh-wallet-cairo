@@ -48,6 +48,9 @@ pub mod signer {
     pub mod eip712_secp256k1 {
         pub mod verifier;
     }
+    pub mod stark_snip12 {
+        pub mod verifier;
+    }
     pub mod jwt_es256 {
         pub mod verifier;
     }
