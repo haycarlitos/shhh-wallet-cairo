@@ -506,6 +506,32 @@ pub mod ShhhAccount {
                 'SHHH: signer not an owner',
             );
 
+            // V8.5: one owner alone must carry the wallet's threshold.
+            // Before V8.5 this path never read the threshold, so on a
+            // 2-of-3 wallet any single owner (or any one approval of a
+            // multisig proposal, which is a complete V2_SNIP12 envelope
+            // over the same hash) executed alone. Owners below the
+            // threshold sign through V2_THRESHOLD.
+            //
+            // Two calls stay open to a single envelope below the
+            // threshold, because they exist for the case where the
+            // threshold can't be met:
+            //   - a guardian's `initiate_recovery` (carve-out above;
+            //     guardian weight never counts toward the threshold);
+            //   - an owner's `cancel_recovery` naming itself: the owner
+            //     veto over a recovery, which a single owner held before
+            //     V8.5 and must keep, or a hostile guardian could take a
+            //     wallet whose other owners lost their keys.
+            if owner.role == ROLE_OWNER {
+                assert(
+                    owner.weight >= self.owners.threshold_value()
+                        || _is_single_cancel_recovery_call(
+                            outside_execution.calls, get_contract_address(), owner_id,
+                        ),
+                    'SHHH: below threshold',
+                );
+            }
+
             let kind_tag = *signature.at(2);
             assert(kind_tag == owner.kind, 'SHHH: kind mismatch');
 
@@ -1436,6 +1462,34 @@ pub mod ShhhAccount {
             Option::None => { return false; },
         };
         proposer_id == signer_owner_id
+    }
+
+    /// V8.5: true iff `calls` is exactly one `cancel_recovery(owner_id)`
+    /// on this account with `owner_id` equal to the signer's. The only
+    /// call a single owner below the threshold may sign.
+    fn _is_single_cancel_recovery_call(
+        calls: Span<Call>, self_addr: ContractAddress, signer_owner_id: u32,
+    ) -> bool {
+        if calls.len() != 1_u32 {
+            return false;
+        }
+        let call = calls.at(0);
+        if *call.to != self_addr {
+            return false;
+        }
+        if *call.selector != selector!("cancel_recovery") {
+            return false;
+        }
+        // cancel_recovery(owner_id: u32): exactly one felt.
+        let calldata: Span<felt252> = *call.calldata;
+        if calldata.len() != 1_u32 {
+            return false;
+        }
+        let canceler: u32 = match (*calldata.at(0)).try_into() {
+            Option::Some(v) => v,
+            Option::None => { return false; },
+        };
+        canceler == signer_owner_id
     }
 
     /// V8-specific admin selectors that sessions must never reach.
