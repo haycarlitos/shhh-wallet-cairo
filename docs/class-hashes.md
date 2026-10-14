@@ -48,6 +48,17 @@ V8.2 values.
 | `JwtES256AppleSubVerifier`| `0x06b67762218a25fdd28e25b063480893a5cef9cdeecbc663e32d444d5734c471`        | Sign in with Apple — multi-tenant (sub-bound) (V8.2)     |
 | `Bls12_381MinSigVerifier` | `0x02623721e74a9ad3e0ba639065f5631a09bf900913de6ab21ea6984973cd2cd1`        | BLS12-381 min-sig-size (drand DST) (V8.2)                |
 
+## Pending declare
+
+Built with Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7, the same toolchain
+that reproduces every hash above byte for byte. Works on any deployed
+V8.2+ `ShhhAccount` through `propose_add_verifier_class` (48h), with no
+account upgrade.
+
+| Contract                  | Class hash                                                                  | Role                                                     |
+|---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
+| `StarkSnip12Verifier`     | `0x017884125977631bee198b34cd3e3fcf975a543e453c8b996a818910a964b5e`        | STARK ECDSA over a SNIP-12 `Approval{Wallet, Hash}` wrapper: what Starknet browser wallets (Bramble, Braavos, Ready/Argent, OpenZeppelin accounts) sign with `wallet_signTypedData`. The Starknet twin of `EIP712Secp256k1Verifier`. |
+
 ## Deprecated V8.0 / V8.1 classes (kept declared for legacy recognition)
 
 V8.1 verifier classes lack `validate_pubkey` and are incompatible with

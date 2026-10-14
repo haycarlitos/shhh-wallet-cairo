@@ -46,6 +46,10 @@ pub const KIND_BLS12_381: felt252 = 'BLS12_381';
 pub const KIND_WEBAUTHN_P256: felt252 = 'WEBAUTHN_P256';
 pub const KIND_EIP191_SECP256K1: felt252 = 'EIP191_SECP256K1';
 pub const KIND_EIP712_SECP256K1: felt252 = 'EIP712_SECP256K1';
+/// STARK ECDSA over a SNIP-12 typed-data wrapper — what Starknet browser
+/// wallets (Bramble, Braavos, Ready/Argent, OpenZeppelin accounts) sign
+/// with `wallet_signTypedData`. The Starknet twin of EIP712_SECP256K1.
+pub const KIND_STARK_SNIP12: felt252 = 'STARK_SNIP12';
 pub const KIND_DKIM_RSA: felt252 = 'DKIM_RSA';
 pub const KIND_JWT_RS256: felt252 = 'JWT_RS256';
 pub const KIND_JWT_ES256: felt252 = 'JWT_ES256';
