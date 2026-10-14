@@ -422,6 +422,8 @@ Every owner-signed OE wraps a single envelope at the start of the `signature` sp
 ```
 where each `env_i` is shaped `[owner_id, kind_tag, ...payload]` (NO inner version tag). The account verifies each envelope, rejects duplicate `owner_id`s, and asserts `sum(weights) >= threshold`. See section 14.
 
+On V8.5 the single-owner envelope also asserts `owner.weight >= threshold` (except a lone `cancel_recovery` naming the signer, and a guardian's `initiate_recovery`). On V8.0–V8.4 it does not: there, keep the threshold at 1. See section 14.
+
 ---
 
 ## 9. Per-kind signing flows
@@ -940,7 +942,7 @@ The recovery story: a user adds N guardians (any kinds — Phantom + MetaMask + 
 
 Aggregate signatures from multiple owners on the same OE.
 
-**Setup**:
+**Setup** (requires `ShhhAccount` V8.5 or later, `0x067828c8…bd96a`):
 1. Add multiple owners with non-zero weights (each via the timelocked add_owner flow).
 2. Set the account threshold:
    ```cairo
@@ -971,6 +973,10 @@ The account:
 3. Computes `sum(weights)`; reverts if `< threshold`.
 
 **Use case**: 2-of-3 across a laptop MetaMask (EIP-191), a phone passkey (WEBAUTHN_P256), and a hardware-key (raw secp256k1). Any 2 sign, the OE clears.
+
+**Single owners on a threshold account (V8.5).** A `V2_SNIP12` envelope from an owner whose `weight < threshold` reverts with `'SHHH: below threshold'`, unless the OE is exactly one `cancel_recovery(owner_id)` naming that owner (the recovery veto). An owner whose weight alone meets the threshold can still sign alone.
+
+**V8.4 and earlier do not enforce this.** Their single-owner path never reads the threshold, so on a 2-of-3 V8.4 wallet one owner's `V2_SNIP12` envelope clears, and so does any one stored approval of a proposal (each inner envelope here becomes a complete `V2_SNIP12` envelope once the tag is added). Don't raise the threshold above 1 on a V8.4 wallet; deploy V8.5 for N-of-M. See [`v8-5-audit-entry.md`](./v8-5-audit-entry.md).
 
 ---
 

@@ -12,14 +12,20 @@ for, with cross-ecosystem recovery, AI-agent-friendly session keys, and
 no extra wallet install for the user. Built to cover roughly 99% of
 self-custodial signers in production today.
 
-What's live on Starknet mainnet right now (2026-05-05), via class
+What's live on Starknet mainnet right now (2026-10-14), via class
 hashes in [`class-hashes.md`](./class-hashes.md):
 
-- `ShhhAccount` — the account class
+- `ShhhAccount` — the account class (V8.5)
 - `StarkVerifier` — raw-hash STARK signers: Ledger Starknet app,
   relayers, server keys. Browser wallets (Bramble, Braavos, Ready) use
-  STARK keys but never sign a raw hash, so they need
-  `StarkSnip12Verifier` (pending declare, below).
+  STARK keys but never sign a raw hash, so they use
+  `StarkSnip12Verifier` instead.
+- `StarkSnip12Verifier` — Bramble, Braavos, Ready/Argent and
+  OpenZeppelin accounts through `wallet_signTypedData`. The wallet
+  shows a SNIP-12 `Approval { Wallet, Hash }` and signs it with its
+  STARK key; the verifier rebuilds that typed data (bound to the
+  ShhhAccount and the chain) and checks the ECDSA. Pure, no external
+  calls, so counterfactual accounts work too. Declared 2026-10-14.
 - `Ed25519Verifier` — Phantom, Solflare, every Solana wallet
 - `Secp256k1Verifier` — raw secp256k1 (hardware wallets exposing
   low-level signing)
@@ -40,14 +46,7 @@ hashes in [`class-hashes.md`](./class-hashes.md):
 - `WebAuthnP256Verifier` — Apple passkeys, Touch ID, Face ID,
   Windows Hello, YubiKey FIDO2
 
-In the same `v8-robust` branch but pending mainnet declare:
 
-- `StarkSnip12Verifier` — Bramble, Braavos, Ready/Argent and
-  OpenZeppelin accounts through `wallet_signTypedData`. The wallet
-  shows a SNIP-12 `Approval { Wallet, Hash }` and signs it with its
-  STARK key; the verifier rebuilds that typed data (bound to the
-  ShhhAccount and the chain) and checks the ECDSA. Pure, no external
-  calls, so counterfactual accounts work too.
 
 - `Bls12_381MinSigVerifier` — BLS12-381 min-sig-size (drand
   ciphersuite). 48-byte G1 signatures, 96-byte G2 pubkeys.
@@ -78,8 +77,9 @@ What kind of wallet UX a Starknet dapp can now offer:
 4. **Cross-ecosystem recovery** — if your phone dies, your laptop's
    MetaMask, your watch's passkey, a YubiKey, or a family member's
    Phantom can all be set up as guardians for your Starknet account.
-   Recovery is a 7-day timelocked flow that any guardian (matching the
-   account's threshold) can initiate. No seed phrase to remember.
+   Recovery is a 7-day timelocked flow that any single guardian can
+   initiate and any owner can cancel during the wait. No seed phrase
+   to remember.
 
 5. **AI-agent permissions** — grant an agent a session key with
    per-token spending caps that expires automatically. The agent can
@@ -151,7 +151,10 @@ broadly:
    gives the same "no single device compromise can move funds"
    property as MPC threshold signing, with no MPC nodes to run, no
    per-user vendor fees, and the threshold logic enforced on chain
-   instead of off-chain coordination.
+   instead of off-chain coordination. This needs `ShhhAccount` V8.5 or
+   later: V8.0–V8.4 check the threshold only on threshold envelopes,
+   so one owner signing alone bypasses it
+   ([`v8-5-audit-entry.md`](./v8-5-audit-entry.md)).
 
 5. **AI agents that can transact on Starknet safely.** Session keys
    plus per-token spending policies plus automatic expiry let agents

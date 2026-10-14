@@ -12,6 +12,7 @@ table below chronologically (oldest first).
 | 2026-05-10 | Carlos Castillo — V8.2 audit-readiness self-review, AI-assisted (Claude Opus 4.7) | [`2026-05-10-claude-opus-v8-2-review.md`](./2026-05-10-claude-opus-v8-2-review.md) | All findings closed in V8.3 (mainnet redeclare 2026-05-11; account-class only, verifier hashes unchanged from V8.2) | 1 High + 1 Medium full closure + 2 Medium + 1 Low |
 | 2026-05-12 | Carlos Castillo — V8.4 pre-merge audit, AI-assisted (Claude Opus 4.7), adversarial independent pass after author self-review | [`2026-05-12-claude-opus-v8-4-review.md`](./2026-05-12-claude-opus-v8-4-review.md) | 1 Critical + 1 Low closed in subsequent commits on `feat/v8-4-bootstrap-safety-and-guardian-oe` (PR #10); 3 Informational acknowledged | 1 Critical + 1 Low + 3 Info |
 | 2026-05-14 | Carlos Castillo — V8.4 pre-declare re-review, AI-assisted (Claude Opus 4.7), adversarial independent pass against the audit-response delta after the 2026-05-12 Critical fix | [`2026-05-14-claude-opus-v8-4-pre-declare-audit.md`](./2026-05-14-claude-opus-v8-4-pre-declare-audit.md) | **Verdict: READY TO DECLARE.** INFO-2 docstring mitigation applied; INFO-1 deferred (auditor judged non-exploitable, can land in V8.5 if desired) | 2 Info |
+| 2026-10-12 | Carlos Castillo — finding during the Starknet-browser-wallet (Bramble) threshold integration, AI-assisted (Claude) | [`docs/v8-5-audit-entry.md`](../docs/v8-5-audit-entry.md) | Closed in V8.5 (mainnet declare 2026-10-14). No affected wallets: no mainnet SHHH wallet ever had a threshold above 1 | 1 Critical |
 
 ## Status of findings
 
@@ -41,6 +42,16 @@ delta from the 2026-05-12 cycle, gating the V8.4 mainnet declare on a
 fresh "find what the last audit missed" pass. Verdict:
 **READY TO DECLARE**. Two Informational findings raised; INFO-2
 docstring mitigation applied at the same commit as the audit doc.
+
+The 2026-10-12 finding — the single-owner `V2_SNIP12` envelope never
+checked the threshold, so one owner of an N-of-M wallet could act
+alone — was missed by every earlier review because the SNIP draft
+itself scoped threshold aggregation to `V2_THRESHOLD` envelopes; code
+and spec agreed. It surfaced while building multi-signer flows for
+external wallets, was confirmed with an snforge probe, and is closed
+in V8.5 with 11 regression tests (`tests/account_threshold_v8_5.cairo`).
+INFO-1 from the 2026-05-14 review is still deferred; V8.5 changes only
+the threshold check.
 
 ## Chronology
 
