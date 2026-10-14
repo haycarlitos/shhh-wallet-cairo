@@ -1,10 +1,10 @@
 # V8 class hashes (live on Starknet mainnet)
 
-V8 launched 2026-04-28 with six classes. As of 2026-05-15 there are
-**15 V8.x classes** declared on mainnet:
+V8 launched 2026-04-28 with six classes. As of 2026-10-14 there are
+**17 V8.x classes** declared on mainnet:
 
-- **11 active classes** for new deploys (V8.4 `ShhhAccount` + 10 V8.2 verifier classes).
-- **4 deprecated `ShhhAccount` classes** (V8.0 / V8.1 / V8.2 / V8.3) retained for legacy recognition; they have unfixed audit findings or known limitations from earlier review cycles and must not be used for new deploys.
+- **12 active classes** for new deploys: V8.5 `ShhhAccount`, the 10 V8.2 verifier classes, and `StarkSnip12Verifier`.
+- **5 deprecated `ShhhAccount` classes** (V8.0 / V8.1 / V8.2 / V8.3 / V8.4) retained for legacy recognition; they have unfixed audit findings or known limitations from earlier review cycles and must not be used for new deploys. V8.4 was deprecated on 2026-10-14 because its single-owner path does not enforce the threshold ([`v8-5-audit-entry.md`](./v8-5-audit-entry.md)).
 
 Hashes are deterministic functions of the compiled Sierra, so the
 values in the tables below were known and published before declare
@@ -19,22 +19,29 @@ docs: `audits/2026-05-07-claude-opus-pre-phase13-review.md`,
 `audits/2026-05-10-claude-opus-v8-2-review.md`,
 `audits/2026-05-12-claude-opus-v8-4-review.md`,
 `audits/2026-05-14-claude-opus-v8-4-pre-declare-audit.md`,
-`docs/audit-response-2026-05-10.md`.
+`docs/audit-response-2026-05-10.md`,
+[`docs/v8-5-audit-entry.md`](./v8-5-audit-entry.md).
 
-## Production classes (V8.4 — current; declared 2026-05-15)
+## Production classes (V8.5 — current; declared 2026-10-14)
 
-V8.4 closes two architectural gaps from the 2026-05-12 SDK-integration
-review (stranded-bootstrap recovery + guardian-OE `initiate_recovery`)
-plus the Critical from the 2026-05-12 V8.4 pre-merge audit
-(`bootstrap_from_sessions_signed` missing pubkey-binding gate) and the
-Low (calldata-length floor on `_is_single_initiate_recovery_call`).
-The 2026-05-14 pre-declare re-review verdict was **READY TO DECLARE**.
-Only the account contract changed — verifier class hashes stay at
-V8.2 values.
+V8.5 makes the single-owner `V2_SNIP12` envelope enforce the
+threshold: an owner signing alone needs `weight >= threshold`. Through
+V8.4 that path never read the threshold, so on an N-of-M wallet any
+one owner could execute alone. No mainnet wallet ever had a threshold
+above 1, so none was affected. Full record:
+[`v8-5-audit-entry.md`](./v8-5-audit-entry.md). Only the account
+contract changed; storage layout, ABI and constructor are identical to
+V8.4, and verifier class hashes stay at their V8.2 values.
+
+`StarkSnip12Verifier` was declared the same day. It is a new signer
+kind (`STARK_SNIP12`), not a replacement: any V8.2+ `ShhhAccount` adds
+it through `propose_add_verifier_class` (48h), with no account
+upgrade.
 
 | Contract                  | Class hash                                                                  | Role                                                     |
 |---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `ShhhAccount` V8.4        | `0x075dfb396145926bffa6beb659897f46cc082a50b211d80871cff7f1038fa58a`        | V8 account — V8.3 + stranded-bootstrap recovery + guardian-OE `initiate_recovery` + 2026-05-12 audit C-1 closeout. **Use this for new deploys.** |
+| `ShhhAccount` V8.5        | `0x067828c8b82ac723b4adb141f9aa8975e296d8c11179d22bb8d7203b32abd96a`        | V8 account — V8.4 + single-owner envelopes must carry the threshold. **Use this for new deploys.** |
+| `ShhhAccount` V8.4        | `0x075dfb396145926bffa6beb659897f46cc082a50b211d80871cff7f1038fa58a`        | V8.3 + stranded-bootstrap recovery + guardian-OE `initiate_recovery` + 2026-05-12 audit C-1 closeout. Deprecated 2026-10-14: its single-owner path doesn't enforce the threshold. Safe only at threshold 1. |
 | `ShhhAccount` V8.3        | `0x03bc539295abd3e59bd9ea799d12fe3331748d484bc77bff45b302b1636a87d9`        | V8.3 (no stranded-bootstrap recovery primitive; no guardian-OE `initiate_recovery`). Deprecated 2026-05-15. |
 | `ShhhAccount` V8.2        | `0x02a0b719d79b063cafd45a32d34c98b28f220baa678611db63790150a361a062`        | V8.2 (audit M-1 partial in OE paths only). Deprecated 2026-05-11. |
 | `StarkVerifier`           | `0x00d09209b2da9d49fc805ba26380ba4ce25aa641116c10eb178e1051a71dbf68`        | STARK-curve owner signer (V8.2)                          |
@@ -47,23 +54,13 @@ V8.2 values.
 | `JwtES256AppleVerifier`   | `0x002efce875fa3e73e04d825d8ebade53e188cc995dfe0c55a6a2f7fa6c59f497`        | Sign in with Apple — single-tenant (V8.2)                |
 | `JwtES256AppleSubVerifier`| `0x06b67762218a25fdd28e25b063480893a5cef9cdeecbc663e32d444d5734c471`        | Sign in with Apple — multi-tenant (sub-bound) (V8.2)     |
 | `Bls12_381MinSigVerifier` | `0x02623721e74a9ad3e0ba639065f5631a09bf900913de6ab21ea6984973cd2cd1`        | BLS12-381 min-sig-size (drand DST) (V8.2)                |
-
-## Pending declare
-
-Built with Scarb 2.14.0 / Cairo 2.14 / Sierra 1.7, the same toolchain
-that reproduces every hash above byte for byte. Works on any deployed
-V8.2+ `ShhhAccount` through `propose_add_verifier_class` (48h), with no
-account upgrade.
-
-| Contract                  | Class hash                                                                  | Role                                                     |
-|---------------------------|-----------------------------------------------------------------------------|----------------------------------------------------------|
-| `StarkSnip12Verifier`     | `0x017884125977631bee198b34cd3e3fcf975a543e453c8b996a818910a964b5e`        | STARK ECDSA over a SNIP-12 `Approval{Wallet, Hash}` wrapper: what Starknet browser wallets (Bramble, Braavos, Ready/Argent, OpenZeppelin accounts) sign with `wallet_signTypedData`. The Starknet twin of `EIP712Secp256k1Verifier`. |
+| `StarkSnip12Verifier`     | `0x017884125977631bee198b34cd3e3fcf975a543e453c8b996a818910a964b5e`        | STARK ECDSA over a SNIP-12 `Approval{Wallet, Hash}` wrapper: what Starknet browser wallets (Bramble, Braavos, Ready/Argent, OpenZeppelin accounts) sign with `wallet_signTypedData`. The Starknet twin of `EIP712Secp256k1Verifier`. Declared 2026-10-14. |
 
 ## Deprecated V8.0 / V8.1 classes (kept declared for legacy recognition)
 
 V8.1 verifier classes lack `validate_pubkey` and are incompatible with
 V8.2 ShhhAccount. The V8.0 / V8.1 ShhhAccount stay declared so legacy
-instances remain readable; **new deploys MUST use V8.2.**
+instances remain readable; **new deploys MUST use V8.5.**
 
 | Contract                  | V8.1 class hash (deprecated)                                                 |
 |---------------------------|------------------------------------------------------------------------------|
@@ -89,8 +86,10 @@ instances remain readable; **new deploys MUST use V8.2.**
 
 ## Deploy status
 
-**15 V8.x classes declared on Starknet mainnet** by deployer
-`0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`:
+**17 V8.x classes declared on Starknet mainnet**. The first 15 by
+deployer `0x64b1cf9c492b9ea333db7d4a2836feeee31cd1e2720f43b22732873122d433e`,
+the two 2026-10-14 declares by
+`0x2937e79f543da6a3a6594bf3c94f63a3f1ccb9edcec7de71cd9f98aafcfea86`:
 
 - 2026-04-28 — initial 6: V8.0 `ShhhAccount` + StarkVerifier +
   Ed25519Verifier + Secp256k1Verifier + P256Verifier +
@@ -119,22 +118,31 @@ instances remain readable; **new deploys MUST use V8.2.**
   class hashes unchanged from V8.2. Declare tx
   `0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd`
   in block 9787252, actual cost 43.67 STRK.
+- 2026-10-14 — V8.5 `ShhhAccount` redeclare: single-owner envelopes
+  must carry the threshold ([`v8-5-audit-entry.md`](./v8-5-audit-entry.md)).
+  Verifier class hashes unchanged. Declare tx
+  `0x06c6a955a10e6970849305b5eb84bf015358078d50814944388e52842451f788`
+  in block 16375744, actual cost 24.26 STRK.
+- 2026-10-14 — +1: `StarkSnip12Verifier` (new `STARK_SNIP12` kind for
+  Starknet browser wallets). Declare tx
+  `0x00ba33298b0c6b833cf5325c0f8880339279718e644c86bac68cb383829059e6`
+  in block 16377651, actual cost 1.30 STRK.
 
-Total declare cost: ~327 STRK across the 15 classes (283 through V8.3 + 43.67 V8.4).
+Total declare cost: ~353 STRK across the 17 classes (283 through V8.3 + 43.67 V8.4 + 24.26 V8.5 + 1.30 `StarkSnip12Verifier`).
 
-V8.0 / V8.1 / V8.2 / V8.3 `ShhhAccount` classes stay declared for
-legacy recognition but are deprecated for new deploys. V8.1 verifier
-class hashes are incompatible with V8.2+ ShhhAccount because they
-lack `validate_pubkey`. Existing V8.x instances do not have a self-
-upgrade path — the only path from V8.0 / V8.1 / V8.2 / V8.3 to V8.4
-is to deploy a fresh V8.4 account at a new address and migrate funds
-manually.
+V8.0 / V8.1 / V8.2 / V8.3 / V8.4 `ShhhAccount` classes stay declared
+for legacy recognition but are deprecated for new deploys. V8.1
+verifier class hashes are incompatible with V8.2+ ShhhAccount because
+they lack `validate_pubkey`. Existing V8.x instances do not have a
+self-upgrade path — the only path from V8.0–V8.4 to V8.5 is to deploy
+a fresh V8.5 account at a new address and migrate funds manually. A
+V8.4 wallet that stays at threshold 1 is not affected by the V8.5
+finding and does not need to move.
 
-Phase 13 + 14 external audits are scheduled against the V8.4 commit
-(post-merge `v8-robust` HEAD after PR #11). If an external audit
-finding requires a redeploy, V8.5 = new class hash + opt-in new-
-address deploy (existing V8.x wallets keep working at their current
-class).
+Phase 13 + 14 external audits target the V8.5 commit. If an external
+audit finding requires a redeploy, V8.6 = new class hash + opt-in
+new-address deploy (existing V8.x wallets keep working at their
+current class).
 
 ## How to reproduce
 
@@ -145,7 +153,8 @@ scarb build
 for c in ShhhAccount StarkVerifier Ed25519Verifier Secp256k1Verifier \
          EIP191Secp256k1Verifier EIP712Secp256k1Verifier P256Verifier \
          WebAuthnP256Verifier JwtES256AppleVerifier \
-         JwtES256AppleSubVerifier Bls12_381MinSigVerifier; do
+         JwtES256AppleSubVerifier Bls12_381MinSigVerifier \
+         StarkSnip12Verifier; do
   sncast utils class-hash --contract-name "$c"
 done
 ```

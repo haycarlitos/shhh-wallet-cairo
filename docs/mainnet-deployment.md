@@ -51,7 +51,14 @@ STRK price reference: $0.038 / STRK (2026-04-28)
 | **V8.2 cycle (11 classes)**  | n/a         | see [audits/2026-05-10-claude-opus-v8-2-review.md](../audits/2026-05-10-claude-opus-v8-2-review.md) for per-class hashes | ~210 STRK | ~$8.0   |
 | **V8.3 ShhhAccount**         | 851 KB      | declare 2026-05-11 (audit-closed against 2026-05-10 V8.2 review)        | ~46 STRK    | ~$1.75  |
 | **V8.4 ShhhAccount**         | 854 KB      | [`0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd`](https://voyager.online/tx/0x0737570e0430bed8e21c05bcb88a6f649f99d8a5f3d36dd0350a0dd172ea0dfd) — class `0x075dfb396…fa58a`, block 9787252, 2026-05-15 | 43.6711 STRK| ~$1.66  |
-| **Total**                 |             |                                                                        | **~536 STRK** | **~$20.4** |
+| **V8.5 ShhhAccount**         | n/a         | [`0x06c6a955a10e6970849305b5eb84bf015358078d50814944388e52842451f788`](https://voyager.online/tx/0x06c6a955a10e6970849305b5eb84bf015358078d50814944388e52842451f788) — class `0x067828c8…bd96a`, block 16375744, 2026-10-14 ([why](./v8-5-audit-entry.md)) | 24.2552 STRK| n/a     |
+| **StarkSnip12Verifier**      | n/a         | [`0x00ba33298b0c6b833cf5325c0f8880339279718e644c86bac68cb383829059e6`](https://voyager.online/tx/0x00ba33298b0c6b833cf5325c0f8880339279718e644c86bac68cb383829059e6) — class `0x017884125…4b5e`, block 16377651, 2026-10-14 | 1.3019 STRK | n/a     |
+| **Total**                 |             |                                                                        | **~562 STRK** | **~$20.4 through V8.4** |
+
+The two 2026-10-14 declares were sent by
+`0x2937e79f543da6a3a6594bf3c94f63a3f1ccb9edcec7de71cd9f98aafcfea86`;
+everything earlier by the deployer listed above. USD values are only
+recorded for declares priced at the 2026-04-28 reference rate.
 
 Cost scales roughly linearly with Sierra size — bigger class, more bytes
 to upload + more validation work.
